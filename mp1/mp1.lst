@@ -1,0 +1,803 @@
+     1                                  ; MP1 - Terrence Janas - September 7, 2001
+     2                                  ;
+     3                                  ;
+     4                                  ; Josh Potts, Fall 2001
+     5                                  ; Guest Author: George Lu
+     6                                  ; University of Illinois, Urbana-Champaign
+     7                                  ; Dept. of Electrical and Computer Engineering
+     8                                  ;
+     9                                  ; Version 1.0
+    10                                  
+    11                                  	BITS	16
+    12                                  
+    13                                  ;====== SECTION 1: Define constants =======================================
+    14                                  
+    15                                          CR          EQU 0Dh
+    16                                          LF          EQU 0Ah
+    17                                          BEL         EQU 07h
+    18                                          MAX_ENTRIES EQU 10
+    19                                  
+    20                                  ;====== SECTION 2: Declare external procedures ============================
+    21                                  
+    22                                  ; These are functions from lib291
+    23                                  EXTERN  kbdine, dspout, dspmsg, dosxit,ascbin,binasc
+    24                                  
+    25                                  ; You will be writing your own versions of these functions
+    26                                  EXTERN _libDisplayEntry, _libDisplayAllEntries, _libDisplayAcademicEntries
+    27                                  EXTERN _libInterpretAmount, _libInterpretTag, _libAddDeposit
+    28                                  EXTERN _libAddWithdraw, _libDisplayTotal, mp1xit
+    29                                  
+    30                                  ; The _lib functions need these to work properly
+    31                                  GLOBAL MainHeader, MainMenu, AmountMenu, TagMenu, msg_Total, msg_NoEntries
+    32                                  GLOBAL msg_Invalid, msg_Deposit, msg_Withdraw, msg_Books, msg_Supply
+    33                                  GLOBAL msg_Academic, msg_Rent, msg_Food, msg_Entertain, msg_Other
+    34                                  GLOBAL msg_CRLF, msg_Cookie, msg_BigDebt, msg_SmallDebt, msg_SmallPlus
+    35                                  GLOBAL msg_BigPlus
+    36                                  GLOBAL _DisplayMainMenu, _DisplayAmountMenu, _DisplayTagMenu
+    37                                  GLOBAL EntryArray, NumEntries, Buffer
+    38                                  GLOBAL _DisplayEntry, _InterpretAmount, _InterpretTag
+    39                                  
+    40                                  ;====== SECTION 3: Define stack segment ===================================
+    41                                  
+    42                                  SEGMENT stkseg STACK
+    43 00000000 <res 00000200>                  resb      64*8
+    44                                  stacktop:
+    45                                  
+    46                                  ;====== SECTION 4: Define code segment ====================================
+    47                                  
+    48                                  SEGMENT code
+    49                                  
+    50                                  ;====== SECTION 5: Declare variables for main procedure ===================
+    51                                  
+    52 00000000 <res 0000001E>          EntryArray      resb (3*MAX_ENTRIES)
+    53 0000001E 00                      NumEntries      db 0
+    54 0000001F <res 00000007>          Buffer          resb 7
+    55                                  
+    56 00000026 0D0A0D0A426C61682E-     MainHeader      db CR, LF, CR, LF, 'Blah.  Witty Menu Title Here.'
+    57 0000002F 20205769747479204D-
+    58 00000038 656E75205469746C65-
+    59 00000041 20486572652E       
+    60 00000047 0D0A20204375727265-                     db CR, LF, '  Current Number of Entries: $'
+    61 00000050 6E74204E756D626572-
+    62 00000059 206F6620456E747269-
+    63 00000062 65733A2024         
+    64 00000067 0D0A2D2D2D2D2D2D2D-     MainMenu        db CR, LF, '------------------------------------'
+    65 00000070 2D2D2D2D2D2D2D2D2D-
+    66 00000079 2D2D2D2D2D2D2D2D2D-
+    67 00000082 2D2D2D2D2D2D2D2D2D-
+    68 0000008B 2D2D               
+    69 0000008D 0D0A206129204D616B-                     db CR, LF, ' a) Make a deposit'
+    70 00000096 652061206465706F73-
+    71 0000009F 6974               
+    72 000000A1 0D0A206229204D616B-                     db CR, LF, ' b) Make a withdrawal'
+    73 000000AA 652061207769746864-
+    74 000000B3 726177616C         
+    75 000000B8 0D0A20632920446973-                     db CR, LF, ' c) Display all entries'
+    76 000000C1 706C617920616C6C20-
+    77 000000CA 656E7472696573     
+    78 000000D1 0D0A20642920446973-                     db CR, LF, ' d) Display academic-related entries'
+    79 000000DA 706C61792061636164-
+    80 000000E3 656D69632D72656C61-
+    81 000000EC 74656420656E747269-
+    82 000000F5 6573               
+    83 000000F7 0D0A20652920457869-                     db CR, LF, ' e) Exit'
+    84 00000100 74                 
+    85 00000101 0D0A0D0A53656C6563-                     db CR, LF, CR, LF, 'Selection: $'
+    86 0000010A 74696F6E3A2024     
+    87                                  
+    88 00000111 0D0A                    AmountMenu      db CR, LF
+    89 00000113 0D0A53656C65637420-                     db CR, LF, 'Select Amount of Transaction:'
+    90 0000011C 416D6F756E74206F66-
+    91 00000125 205472616E73616374-
+    92 0000012E 696F6E3A           
+    93 00000132 0D0A2D2D2D2D2D2D2D-                     db CR, LF, '-----------------------------'
+    94 0000013B 2D2D2D2D2D2D2D2D2D-
+    95 00000144 2D2D2D2D2D2D2D2D2D-
+    96 0000014D 2D2D2D2D           
+    97 00000151 0D0A20612920312020-                     db CR, LF, ' a) 1         b) 4'
+    98 0000015A 202020202020206229-
+    99 00000163 2034               
+   100 00000165 0D0A20632920313620-                     db CR, LF, ' c) 16        d) 64'
+   101 0000016E 202020202020206429-
+   102 00000177 203634             
+   103 0000017A 0D0A20652920323536-                     db CR, LF, ' e) 256       f) 1024'
+   104 00000183 202020202020206629-
+   105 0000018C 2031303234         
+   106 00000191 0D0A20672920343039-                     db CR, LF, ' g) 4096'
+   107 0000019A 36                 
+   108 0000019B 0D0A0D0A53656C6563-                     db CR, LF, CR, LF, 'Selection: $'
+   109 000001A4 74696F6E3A2024     
+   110                                  
+   111 000001AB 0D0A                    TagMenu         db CR, LF
+   112 000001AD 0D0A53656C65637420-                     db CR, LF, 'Select Transaction Memo:'
+   113 000001B6 5472616E7361637469-
+   114 000001BF 6F6E204D656D6F3A   
+   115 000001C7 0D0A2D2D2D2D2D2D2D-                     db CR, LF, '------------------------'
+   116 000001D0 2D2D2D2D2D2D2D2D2D-
+   117 000001D9 2D2D2D2D2D2D2D2D   
+   118 000001E1 0D0A20612920426F6F-                     db CR, LF, ' a) Books'
+   119 000001EA 6B73               
+   120 000001EC 0D0A20622920536368-                     db CR, LF, ' b) School Supplies'
+   121 000001F5 6F6F6C20537570706C-
+   122 000001FE 696573             
+   123 00000201 0D0A206329204F7468-                     db CR, LF, ' c) Other Academic'
+   124 0000020A 65722041636164656D-
+   125 00000213 6963               
+   126 00000215 0D0A2064292052656E-                     db CR, LF, ' d) Rent'
+   127 0000021E 74                 
+   128 0000021F 0D0A20652920466F6F-                     db CR, LF, ' e) Food'
+   129 00000228 64                 
+   130 00000229 0D0A20662920456E74-                     db CR, LF, ' f) Entertainment'
+   131 00000232 65727461696E6D656E-
+   132 0000023B 74                 
+   133 0000023C 0D0A206729204F7468-                     db CR, LF, ' g) Other'
+   134 00000245 6572               
+   135 00000247 0D0A0D0A53656C6563-                     db CR, LF, CR, LF, 'Selection: $'
+   136 00000250 74696F6E3A2024     
+   137                                  
+   138 00000257 0D0A0D0A2020202020-     msg_Total       db CR, LF, CR, LF, '     Account Balance: $'
+   139 00000260 4163636F756E742042-
+   140 00000269 616C616E63653A2024 
+   141 00000272 0D0A54686572652061-     msg_NoEntries   db CR, LF, 'There are no entries!$'
+   142 0000027B 7265206E6F20656E74-
+   143 00000284 726965732124       
+   144 0000028A 0D0A2A2A2A20496E76-     msg_Invalid     db CR, LF, '*** Invalid Selection!  Operation aborted! ***$'
+   145 00000293 616C69642053656C65-
+   146 0000029C 6374696F6E2120204F-
+   147 000002A5 7065726174696F6E20-
+   148 000002AE 61626F727465642120-
+   149 000002B7 2A2A2A24           
+   150 000002BB 0D0A4465706F736974-     msg_Deposit     db CR, LF, 'Deposit    $'
+   151 000002C4 2020202024         
+   152 000002C9 0D0A57697468647261-     msg_Withdraw    db CR, LF, 'Withdraw   $'
+   153 000002D2 7720202024         
+   154 000002D7 202020426F6F6B7324      msg_Books       db '   Books$'
+   155 000002E0 2020205363686F6F6C-     msg_Supply      db '   School Supplies$'
+   156 000002E9 20537570706C696573-
+   157 000002F2 24                 
+   158 000002F3 2020204F7468657220-     msg_Academic    db '   Other Academic$'
+   159 000002FC 41636164656D696324 
+   160 00000305 20202052656E7424        msg_Rent        db '   Rent$'
+   161 0000030D 202020466F6F6424        msg_Food        db '   Food$'
+   162 00000315 202020456E74657274-     msg_Entertain   db '   Entertainment$'
+   163 0000031E 61696E6D656E7424   
+   164 00000326 2020204F7468657224      msg_Other       db '   Other$'
+   165 0000032F 0D0A24                  msg_CRLF        db CR, LF, '$'
+   166 00000332 0D0A0D0A                msg_Cookie      db CR, LF, CR, LF
+   167 00000336 4C656176696E672074-                     db 'Leaving the bank, you stop by a Chinese restaurant', CR, LF
+   168 0000033F 68652062616E6B2C20-
+   169 00000348 796F752073746F7020-
+   170 00000351 62792061204368696E-
+   171 0000035A 657365207265737461-
+   172 00000363 7572616E740D0A     
+   173 0000036A 666F7220666F6F642E-                     db 'for food.  While waiting for your order, you are', CR, LF
+   174 00000373 20205768696C652077-
+   175 0000037C 616974696E6720666F-
+   176 00000385 7220796F7572206F72-
+   177 0000038E 6465722C20796F7520-
+   178 00000397 6172650D0A         
+   179 0000039C 70726573656E746564-                     db 'presented with a fortune cookie.  You break it open', CR, LF
+   180 000003A5 207769746820612066-
+   181 000003AE 6F7274756E6520636F-
+   182 000003B7 6F6B69652E2020596F-
+   183 000003C0 7520627265616B2069-
+   184 000003C9 74206F70656E0D0A   
+   185 000003D1 616E6420746865206D-                     db 'and the message inside reads...', CR, LF, CR, LF, '$'
+   186 000003DA 65737361676520696E-
+   187 000003E3 736964652072656164-
+   188 000003EC 732E2E2E0D0A0D0A24 
+   189 000003F5 4120666F7274756974-     msg_BigDebt     db 'A fortuitious fortune may fix your financial flaws.'
+   190 000003FE 696F757320666F7274-
+   191 00000407 756E65206D61792066-
+   192 00000410 697820796F75722066-
+   193 00000419 696E616E6369616C20-
+   194 00000422 666C6177732E       
+   195 00000428 0D0A20204C75636B79-                     db CR, LF, '  Lucky numbers: 1, 2, 8, 9, 23, 43, 45'
+   196 00000431 206E756D626572733A-
+   197 0000043A 20312C20322C20382C-
+   198 00000443 20392C2032332C2034-
+   199 0000044C 332C203435         
+   200 00000451 0D0A24                                  db CR, LF, '$'
+   201 00000454 596F75206172652069-     msg_SmallDebt   db 'You are in debt.  You are in ECE291.  Get used to both.'
+   202 0000045D 6E20646562742E2020-
+   203 00000466 596F75206172652069-
+   204 0000046F 6E204543453239312E-
+   205 00000478 202047657420757365-
+   206 00000481 6420746F20626F7468-
+   207 0000048A 2E                 
+   208 0000048B 0D0A24                                  db CR, LF, '$'
+   209 0000048E 596F75206861766520-     msg_SmallPlus   db 'You have survived the horrors of IUB.  Enjoy your rest...'
+   210 00000497 737572766976656420-
+   211 000004A0 74686520686F72726F-
+   212 000004A9 7273206F6620495542-
+   213 000004B2 2E2020456E6A6F7920-
+   214 000004BB 796F75722072657374-
+   215 000004C4 2E2E2E             
+   216 000004C7 0D0A2020556E74696C-                     db CR, LF, '  Until next semester.', CR, LF, '$'
+   217 000004D0 206E6578742073656D-
+   218 000004D9 65737465722E0D0A24 
+   219 000004E2 596F75206861766520-     msg_BigPlus     db 'You have too much money for a college student.  The'
+   220 000004EB 746F6F206D75636820-
+   221 000004F4 6D6F6E657920666F72-
+   222 000004FD 206120636F6C6C6567-
+   223 00000506 652073747564656E74-
+   224 0000050F 2E2020546865       
+   225 00000515 0D0A20204952532061-                     db CR, LF, '  IRS and FBI have been contacted.', CR, LF, '$'
+   226 0000051E 6E6420464249206861-
+   227 00000527 7665206265656E2063-
+   228 00000530 6F6E7461637465642E-
+   229 00000539 0D0A24             
+   230                                  
+   231                                  ;====== SECTION 6: Program initialization =================================
+   232                                  
+   233                                  ..start:
+   234 0000053C 8CC8                            mov     ax, cs                  ; Initialize Default Segment register
+   235 0000053E 8ED8                            mov     ds, ax  
+   236 00000540 B8[0000]                        mov     ax, stkseg              ; Initialize Stack Segment register
+   237 00000543 8ED0                            mov     ss, ax
+   238 00000545 BC[0002]                        mov     sp, stacktop            ; Initialize Stack Pointer register
+   239                                  
+   240                                  ;====== SECTION 7: Main procedure =========================================
+   241                                  
+   242                                  MAIN:
+   243                                  
+   244                                  .MainLoop
+   245 00000548 803E[1E00]0A              cmp byte [NumEntries], MAX_ENTRIES
+   246 0000054D 7338                      jae .End
+   247                                  
+   248 0000054F E83E00                    call _DisplayMainMenu
+   249 00000552 3C61                      cmp al, 'a'
+   250 00000554 7419                      je .AddDeposit
+   251 00000556 3C62                      cmp al, 'b'
+   252 00000558 741B                      je .AddWithdraw
+   253 0000055A 3C63                      cmp al, 'c'
+   254 0000055C 741D                      je .DisplayAll
+   255 0000055E 3C64                      cmp al, 'd'
+   256 00000560 741F                      je .DisplayAcad
+   257 00000562 3C65                      cmp al, 'e'
+   258 00000564 7421                      je .End
+   259                                  
+   260 00000566 BA[8A02]                  mov dx, msg_Invalid
+   261 00000569 E8(0000)                  call dspmsg
+   262 0000056C E9D9FF                    jmp .MainLoop
+   263                                  
+   264                                  .AddDeposit
+   265 0000056F E8E701                    call _AddDeposit
+   266 00000572 E9D3FF                    jmp .MainLoop
+   267                                  
+   268                                  .AddWithdraw
+   269 00000575 E81702                    call _AddWithdraw
+   270 00000578 E9CDFF                    jmp .MainLoop
+   271                                  
+   272                                  .DisplayAll
+   273 0000057B E8CC00                    call _DisplayAllEntries
+   274 0000057E E9C7FF                    jmp .MainLoop
+   275                                  
+   276                                  .DisplayAcad
+   277 00000581 E8F600                    call _DisplayAcademicEntries
+   278 00000584 E9C1FF                    jmp .MainLoop
+   279                                  
+   280                                  .End
+   281 00000587 E8C000                    call _DisplayAllEntries
+   282 0000058A E83802                    call _DisplayTotal
+   283 0000058D E8(0000)                  call mp1xit
+   284                                  
+   285                                  
+   286                                  ;--------------------------------------------------------------------------
+   287                                  ; DisplayMainMenu
+   288                                  ;   Inputs: none
+   289                                  ;   Outputs: al = selection from keyboard
+   290                                  ;   Calls: dspmsg, binasc, kbdine
+   291                                  ;--------------------------------------------------------------------------
+   292                                  _DisplayMainMenu
+   293 00000590 53                        push bx               ; All used registers except ax are pushed because
+   294 00000591 51                        push cx               ;   only ax returns information.  (Notice: You can't
+   295 00000592 52                        push dx               ;   push or pop an 8-bit register.)
+   296                                  
+   297 00000593 BA[2600]                  mov dx, MainHeader
+   298 00000596 E8(0000)                  call dspmsg           ; Display menu header
+   299 00000599 31C0                      xor ax, ax
+   300 0000059B A0[1E00]                  mov al, [NumEntries]
+   301 0000059E BB[1F00]                  mov bx, Buffer
+   302 000005A1 E8(0000)                  call binasc           ; Call binasc to convert a binary number into ASCII
+   303 000005A4 89DA                      mov dx, bx
+   304 000005A6 E8(0000)                  call dspmsg           ; Display the converted number
+   305 000005A9 BA[6700]                  mov dx, MainMenu
+   306 000005AC E8(0000)                  call dspmsg           ; Display the rest of the menu
+   307 000005AF E8(0000)                  call kbdine           ; Wait for keyboard input
+   308                                  
+   309 000005B2 5A                        pop dx                ; Pop all pushed registers -- notice the order
+   310 000005B3 59                        pop cx
+   311 000005B4 5B                        pop bx
+   312 000005B5 C3                        ret
+   313                                  
+   314                                  ;--------------------------------------------------------------------------
+   315                                  ; DisplayAmountMenu
+   316                                  ;   Inputs: none
+   317                                  ;   Outputs: al = selection from keyboard
+   318                                  ;   Calls: dspmsg, kbdine
+   319                                  ;--------------------------------------------------------------------------
+   320                                  _DisplayAmountMenu
+   321 000005B6 52                        push dx
+   322 000005B7 BA[1101]                  mov dx, AmountMenu
+   323 000005BA E8(0000)                  call dspmsg
+   324 000005BD E8(0000)                  call kbdine
+   325 000005C0 5A                        pop dx
+   326 000005C1 C3                        ret
+   327                                  
+   328                                  ;--------------------------------------------------------------------------
+   329                                  ; DisplayTagMenu
+   330                                  ;   Inputs: none
+   331                                  ;   Outputs: al = selection from keyboard
+   332                                  ;   Calls: dspmsg, kbdine
+   333                                  ;--------------------------------------------------------------------------
+   334                                  _DisplayTagMenu
+   335 000005C2 52                        push dx
+   336 000005C3 BA[AB01]                  mov dx, TagMenu
+   337 000005C6 E8(0000)                  call dspmsg
+   338 000005C9 E8(0000)                  call kbdine
+   339 000005CC 5A                        pop dx
+   340 000005CD C3                        ret
+   341                                  
+   342                                  ;-------------------------------------------------------------------------
+   343                                  ; DisplayEntry
+   344                                  ;   Inputs: bx = offset to entry
+   345                                  ;   Outputs: displays to screen
+   346                                  ;   Calls: dspmsg, dspout, binasc
+   347                                  ;-------------------------------------------------------------------------
+   348                                  _DisplayEntry
+   349                                  
+   350 000005CE 50                        push ax
+   351 000005CF 51                        push cx
+   352 000005D0 52                        push dx
+   353 000005D1 53                        push bx
+   354                                  
+   355 000005D2 8A0F                      mov cl, byte [bx]     ; gets the tag byte to check if
+   356 000005D4 80E101                    and cl, 01h           ; it is a withdrawl
+   357 000005D7 80F901                    cmp cl, 01h           ; if bit 0 = 1 it is a withdrawl
+   358 000005DA 7409                      je .TypeWithdraw
+   359                                  
+   360 000005DC BA[BB02]                   mov dx, msg_Deposit
+   361 000005DF E8(0000)                   call dspmsg
+   362 000005E2 E90600                     jmp .DollarSignPrint
+   363                                  
+   364                                    .TypeWithdraw:
+   365 000005E5 BA[C902]                   mov dx, msg_Withdraw
+   366 000005E8 E8(0000)                   call dspmsg
+   367                                  
+   368                                    .DollarSignPrint:
+   369 000005EB B224                       mov dl, '$'
+   370 000005ED E8(0000)                   call dspout
+   371                                  
+   372                                  
+   373 000005F0 43                         inc bx                ; bx points to the beginning of transaction amount
+   374 000005F1 8B07                       mov ax, [bx]
+   375                                                           ; binasc requires that ax = 16-bit signed integer to be converted
+   376 000005F3 BB[1F00]                   mov bx, Buffer        ; binasc requires that bx is starting offset address for 7-byte buffer
+   377                                                           ;  to hold the byte string generated
+   378 000005F6 E8(0000)                   call binasc
+   379 000005F9 BA[1F00]                   mov dx, Buffer
+   380 000005FC E8(0000)                   call dspmsg
+   381 000005FF 5B                         pop bx
+   382                                    
+   383 00000600 8A07                       mov al, byte [bx]      ; gets the tag byte to see type of transaction
+   384 00000602 24FE                       and al, 11111110b      ; i.e. Rent, Food
+   385                                  
+   386 00000604 3C02                      cmp al, 2              ; a switch case to display proper transaction message
+   387 00000606 7506                      jne .NotBooks
+   388 00000608 BA[D702]                  mov dx, msg_Books
+   389 0000060B E93500                    jmp .Display
+   390                                  
+   391                                    .NotBooks:
+   392 0000060E 3C04                      cmp al, 4            ; check to see if Supply tag
+   393 00000610 7506                      jne .NotSupply
+   394 00000612 BA[E002]                  mov dx, msg_Supply
+   395 00000615 E92B00                    jmp .Display
+   396                                  
+   397                                    .NotSupply:
+   398 00000618 3C08                      cmp al, 8            ; check to see if Academic tag
+   399 0000061A 7506                      jne .NotAcademic
+   400 0000061C BA[F302]                  mov dx, msg_Academic
+   401 0000061F E92100                    jmp .Display
+   402                                  
+   403                                    .NotAcademic:
+   404 00000622 3C10                      cmp al, 16           ; check to see if Rent tag
+   405 00000624 7506                      jne .NotRent
+   406 00000626 BA[0503]                  mov dx, msg_Rent
+   407 00000629 E91700                    jmp .Display
+   408                                  
+   409                                    .NotRent:
+   410 0000062C 3C20                      cmp al, 32           ; check to see if Food tag
+   411 0000062E 7506                      jne .NotFood
+   412 00000630 BA[0D03]                  mov dx, msg_Food
+   413 00000633 E90D00                    jmp .Display
+   414                                  
+   415                                    .NotFood:
+   416 00000636 3C40                      cmp al, 64           ; check to see if Entertainment tag
+   417 00000638 7506                      jne .NotEntertain
+   418 0000063A BA[1503]                  mov dx, msg_Entertain
+   419 0000063D E90300                    jmp .Display
+   420                                  
+   421                                    .NotEntertain:
+   422 00000640 BA[2603]                  mov dx, msg_Other  
+   423                                  
+   424                                   .Display:
+   425 00000643 E8(0000)                  call dspmsg
+   426 00000646 5A                        pop dx
+   427 00000647 59                        pop cx
+   428 00000648 58                        pop ax
+   429 00000649 C3                        ret
+   430                                  
+   431                                  ;-------------------------------------------------------------------------
+   432                                  ; DisplayAllEntries
+   433                                  ;   Inputs: [NumEntries], [EntryArray]
+   434                                  ;   Outputs: displays to screen
+   435                                  ;   Calls: DisplayEntry, dspmsg
+   436                                  ;-------------------------------------------------------------------------
+   437                                  _DisplayAllEntries
+   438                                    
+   439 0000064A 50                        push ax              ; Save data in registers
+   440 0000064B 53                        push bx              ; on the stack
+   441 0000064C 51                        push cx
+   442 0000064D 52                        push dx
+   443                                  
+   444 0000064E B100                      mov cl, 0                    ; Start the counter at 0
+   445 00000650 BB[0000]                  mov bx, EntryArray           ; bx points to beginning of EntryArray
+   446 00000653 803E[1E00]00              cmp byte [NumEntries], 0     ; Check to see if there is at least 1 entry
+   447 00000658 7509                      jne .AtLeastOneEntry         ;
+   448 0000065A BA[7202]                  mov dx, msg_NoEntries        ; If not, display NoEntries message
+   449 0000065D E8(0000)                  call dspmsg
+   450 00000660 E91200                    jmp .End
+   451                                  
+   452                                   .AtLeastOneEntry:
+   453 00000663 E868FF                    call _DisplayEntry           ; Display entry currently pointed to by bx
+   454 00000666 FEC1                      inc cl                       ; Increment the counter
+   455                                  
+   456 00000668 3A0E[1E00]                cmp cl, [NumEntries]         ; If the counter = NumEntries, 
+   457 0000066C 7407                      je .End                      ; goto end of procedure
+   458 0000066E 81C30300                  add bx, 3                    ; Next entry is 3 bytes higher in array
+   459 00000672 E9EEFF                    jmp .AtLeastOneEntry         ; repeat until completed all entries
+   460                                  
+   461                                  
+   462                                   .End:
+   463 00000675 5A                        pop dx                       ; Restore original register data
+   464 00000676 59                        pop cx                       ; before leaving the routine
+   465 00000677 5B                        pop bx
+   466 00000678 58                        pop ax
+   467 00000679 C3                        ret
+   468                                  
+   469                                  
+   470                                  ;-------------------------------------------------------------------------
+   471                                  ; DisplayAcademicEntries
+   472                                  ;   Inputs: [NumEntries], [EntryArray]
+   473                                  ;   Outputs: displays to screen
+   474                                  ;   Calls: DisplayEntry, dspmsg
+   475                                  ;-------------------------------------------------------------------------
+   476                                  _DisplayAcademicEntries
+   477                                  
+   478 0000067A 50                        push ax              ; Save data in registers
+   479 0000067B 53                        push bx              ; on the stack
+   480 0000067C 51                        push cx
+   481 0000067D 52                        push dx
+   482                                  
+   483 0000067E B90000                    mov cx, 0
+   484 00000681 B000                      mov al, 0
+   485 00000683 BB[0000]                  mov bx, EntryArray
+   486 00000686 803E[1E00]00              cmp byte [NumEntries], 0   ; check if there are any entries
+   487 0000068B 7503                      jne .AtLeastOneEntry
+   488 0000068D E92800                      jmp .NoEntries
+   489                                  
+   490                                   .AtLeastOneEntry:
+   491 00000690 8A0F                      mov cl, byte [bx]          ; move tag byte of current entry to cl
+   492 00000692 B2FE                      mov dl, 11111110b
+   493 00000694 20D1                      and cl, dl
+   494 00000696 80F908                    cmp cl, 8                  ; if tag is 2, 4, or 8 it is for academics
+   495 00000699 7705                      ja .NotAcademic            ; else must not be academic, 
+   496 0000069B E830FF                      call _DisplayEntry
+   497 0000069E FEC0                        inc al                   ; Increment the academic entry counter
+   498                                  
+   499                                  
+   500                                   .NotAcademic:
+   501 000006A0 FEC5                      inc ch                     ; Increment the counter
+   502 000006A2 3A2E[1E00]                cmp ch, [NumEntries]       ; If the counter = NumEntries,
+   503 000006A6 7407                      je .EndLoop                ; we have printed all the entries
+   504 000006A8 81C30300                  add bx, 3                  ; else, next entry is 3 bytes higher in the array
+   505                                    
+   506 000006AC E9E1FF                    jmp .AtLeastOneEntry       ; repeat until completed all entries
+   507                                  
+   508                                  
+   509                                   .EndLoop:
+   510 000006AF 3C00                      cmp al, 0                  ; check if there are any academic entries
+   511 000006B1 7405                      je .NoEntries              ; if not, display NoEntries message
+   512                                  
+   513                                   .End:
+   514 000006B3 5A                        pop dx                       ; Restore original register data
+   515 000006B4 59                        pop cx                       ; before leaving the routine
+   516 000006B5 5B                        pop bx
+   517 000006B6 58                        pop ax
+   518 000006B7 C3                        ret
+   519                                  
+   520                                   .NoEntries:
+   521 000006B8 BA[7202]                  mov dx, msg_NoEntries     ; prints NoEntries message to screen
+   522 000006BB E8(0000)                  call dspmsg
+   523 000006BE E9F2FF                    jmp .End
+   524                                    
+   525                                  
+   526                                  ;-------------------------------------------------------------------------
+   527                                  ; InterpretAmount
+   528                                  ;   Inputs: al = ASCII code of key pressed from AmountMenu
+   529                                  ;   Outputs: dx = binary representation of corresponding amount,
+   530                                  ;                 or -1 on error
+   531                                  ;   Calls: dspmsg
+   532                                  ;-------------------------------------------------------------------------
+   533                                  _InterpretAmount
+   534 000006C1 3C61                      cmp al, 'a'          ; Check input from keyboard to see if valid choice
+   535 000006C3 7422                      je .Amount_is_a      ; goes to correct case
+   536 000006C5 3C62                      cmp al, 'b'
+   537 000006C7 7422                      je .Amount_is_b
+   538 000006C9 3C63                      cmp al, 'c'
+   539 000006CB 7422                      je .Amount_is_c
+   540 000006CD 3C64                      cmp al, 'd'
+   541 000006CF 7422                      je .Amount_is_d
+   542 000006D1 3C65                      cmp al, 'e'
+   543 000006D3 7422                      je .Amount_is_e
+   544 000006D5 3C66                      cmp al, 'f'
+   545 000006D7 7422                      je .Amount_is_f
+   546 000006D9 3C67                      cmp al, 'g'
+   547 000006DB 7422                      je .Amount_is_g
+   548                                  
+   549 000006DD BA[8A02]                  mov dx, msg_Invalid  ; Invalid choice, print error message
+   550 000006E0 E8(0000)                  call dspmsg
+   551 000006E3 BAFFFF                    mov dx, -1 
+   552 000006E6 C3                        ret
+   553                                  
+   554                                    .Amount_is_a:
+   555 000006E7 BA0100                      mov dx, 0001h      ;Choice is $1
+   556 000006EA C3                          ret
+   557                                    .Amount_is_b:
+   558 000006EB BA0400                      mov dx, 0004h      ;Choice is $4
+   559 000006EE C3                          ret
+   560                                    .Amount_is_c:
+   561 000006EF BA1000                      mov dx, 0010h      ;Choice is $16
+   562 000006F2 C3                          ret
+   563                                    .Amount_is_d:
+   564 000006F3 BA4000                      mov dx, 0040h      ;Choice is $64
+   565 000006F6 C3                          ret
+   566                                    .Amount_is_e:
+   567 000006F7 BA0001                      mov dx, 0100h      ;Choice is $256
+   568 000006FA C3                          ret
+   569                                    .Amount_is_f:
+   570 000006FB BA0004                      mov dx, 0400h      ;Choice is $1024
+   571 000006FE C3                          ret
+   572                                    .Amount_is_g:
+   573 000006FF BA0010                      mov dx, 1000h      ;Choice is $4096
+   574 00000702 C3                          ret
+   575                                  
+   576                                  ;-------------------------------------------------------------------------
+   577                                  ; InterpretTag
+   578                                  ;   Inputs: al = ASCII code of key pressed from TagMenu
+   579                                  ;   Outputs: cl = tag with only one 1 corresponding to entered type,
+   580                                  ;                 or all 1s on error
+   581                                  ;   Calls: dspmsg
+   582                                  ;-------------------------------------------------------------------------
+   583                                  _InterpretTag
+   584 00000703 52                        push dx
+   585 00000704 30C9                      xor cl, cl           ; Clear the tag byte
+   586                                  
+   587 00000706 3C61                      cmp al, 'a'          ; Check input from keyboard to see if valid choice
+   588 00000708 7423                      je .Choice_is_a      ; goes to correct case
+   589 0000070A 3C62                      cmp al, 'b'
+   590 0000070C 7425                      je .Choice_is_b
+   591 0000070E 3C63                      cmp al, 'c'
+   592 00000710 7427                      je .Choice_is_c
+   593 00000712 3C64                      cmp al, 'd'
+   594 00000714 7429                      je .Choice_is_d
+   595 00000716 3C65                      cmp al, 'e'
+   596 00000718 742B                      je .Choice_is_e
+   597 0000071A 3C66                      cmp al, 'f'
+   598 0000071C 742D                      je .Choice_is_f
+   599 0000071E 3C67                      cmp al, 'g'
+   600 00000720 742F                      je .Choice_is_g
+   601                                  
+   602 00000722 BA[8A02]                  mov dx, msg_Invalid  ; Invalid choice,
+   603 00000725 E8(0000)                  call dspmsg          ;  prints error message
+   604 00000728 B1FF                      mov cl, -1           ; cl = 11111111b indicates an error
+   605 0000072A E92A00                    jmp .End
+   606                                  
+   607                                    .Choice_is_a:        ; Bit 1 is the books tag
+   608 0000072D 80F102                      xor cl, 00000010b
+   609 00000730 E92400                      jmp .End
+   610                                    .Choice_is_b:        ; Bit 2 is the school supplies tag
+   611 00000733 80F104                      xor cl, 00000100b
+   612 00000736 E91E00                      jmp .End
+   613                                    .Choice_is_c:        ; Bit 3 is the other academic tag
+   614 00000739 80F108                      xor cl, 00001000b
+   615 0000073C E91800                      jmp .End
+   616                                    .Choice_is_d:        ; Bit 4 is the rent tag
+   617 0000073F 80F110                      xor cl, 00010000b
+   618 00000742 E91200                      jmp .End
+   619                                    .Choice_is_e:        ; Bit 5 is the food tag
+   620 00000745 80F120                      xor cl, 00100000b
+   621 00000748 E90C00                      jmp .End
+   622                                    .Choice_is_f:        ; Bit 6 is the entertainment tag
+   623 0000074B 80F140                      xor cl, 01000000b
+   624 0000074E E90600                      jmp .End
+   625                                    .Choice_is_g:        ; Bit 7 is the other tag
+   626 00000751 80F180                      xor cl, 10000000b
+   627 00000754 E90000                      jmp .End
+   628                                  
+   629                                    .End
+   630 00000757 5A                          pop dx
+   631 00000758 C3                          ret
+   632                                  
+   633                                  ;-------------------------------------------------------------------------
+   634                                  ; AddDeposit
+   635                                  ;   Inputs: [NumEntries]
+   636                                  ;   Outputs: [NumEntries], [EntryArray]
+   637                                  ;   Calls: DisplayAmountMenu, InterpretAmount, DisplayTagMenu,
+   638                                  ;           InterpretTag
+   639                                  ;-------------------------------------------------------------------------
+   640                                  _AddDeposit
+   641 00000759 E85AFE                    call _DisplayAmountMenu
+   642 0000075C E862FF                    call _InterpretAmount
+   643 0000075F 81FAFFFF                  cmp dx, -1               ; Check if there was an error with amount
+   644 00000763 7429                      je .End              ; If so, return w/o incrementing [NumEntries]
+   645                                  
+   646 00000765 E85AFE                    call _DisplayTagMenu
+   647 00000768 E898FF                    call _InterpretTag
+   648 0000076B 80F9FF                    cmp cl, -1               ; Check if there was an error with tag
+   649 0000076E 741E                      je .End              ; If so, return w/o incrementing [NumEntries]
+   650                                  
+   651 00000770 80E1FE                    and cl, 11111110b        ; set bit 0 = 0 for deposit
+   652                                  
+   653 00000773 53                        push bx
+   654 00000774 50                        push ax
+   655 00000775 BB[0000]                  mov bx, EntryArray
+   656 00000778 B003                      mov al, 3
+   657 0000077A F626[1E00]                mul byte [NumEntries]    ; next entry is found after 3 bytes in the array
+   658 0000077E 01C3                      add bx, ax               ; move the pointer to the next cell in the array
+   659 00000780 880F                      mov [bx], cl             ; store tag info in first byte of array cell
+   660 00000782 81C30100                  add bx, 1                ; go to the next byte
+   661 00000786 8917                      mov [bx], dx             ; and store the amount
+   662                                    
+   663                                  
+   664 00000788 FE06[1E00]                inc byte [NumEntries]    ; Increment the number of entries
+   665 0000078C 58                        pop ax
+   666 0000078D 5B                        pop bx
+   667                                  
+   668                                    .End:
+   669 0000078E C3                        ret
+   670                                  
+   671                                  ;-------------------------------------------------------------------------
+   672                                  ; AddWithdraw
+   673                                  ;   Inputs: [NumEntries]
+   674                                  ;   Outputs: [NumEntries], [EntryArray]
+   675                                  ;   Calls: DisplayAmountMenu, InterpretAmount, DisplayTagMenu,
+   676                                  ;           InterpretTag
+   677                                  ;-------------------------------------------------------------------------
+   678                                  _AddWithdraw
+   679                                  
+   680 0000078F E824FE                    call _DisplayAmountMenu
+   681 00000792 E82CFF                    call _InterpretAmount
+   682 00000795 81FAFFFF                  cmp dx, -1               ; Check if there was an error
+   683 00000799 7429                      je .End                  ; If so, return without inc [NumEntries]
+   684                                  
+   685 0000079B E824FE                    call _DisplayTagMenu
+   686 0000079E E862FF                    call _InterpretTag
+   687 000007A1 80F9FF                    cmp cl, -1               ; Check if there was an error
+   688 000007A4 741E                      je .End                  ; If so, return without inc [NumEntries]
+   689                                  
+   690 000007A6 80C901                    or cl, 00000001b         ; set bit 0 = 1 for withdrawl
+   691                                  
+   692 000007A9 53                        push bx
+   693 000007AA 50                        push ax
+   694 000007AB BB[0000]                  mov bx, EntryArray       ; bx is pointing to the EntryArray
+   695 000007AE B003                      mov al, 3
+   696 000007B0 F626[1E00]                mul byte [NumEntries]    ; ax = 3*NumEntries
+   697 000007B4 01C3                      add bx, ax               ; move the pointer to the next cell in the array
+   698 000007B6 880F                      mov [bx], cl             ; store tag info in first byte of array cell
+   699 000007B8 81C30100                  add bx, 1                ; go to the next byte
+   700 000007BC 8917                      mov [bx], dx             ; and store the amount
+   701                                    
+   702                                  
+   703 000007BE FE06[1E00]                inc byte [NumEntries]    ; Add 1 to the number of entries
+   704 000007C2 58                        pop ax
+   705 000007C3 5B                        pop bx
+   706                                  
+   707                                    .End:
+   708 000007C4 C3                        ret
+   709                                  
+   710                                  
+   711                                  ;-------------------------------------------------------------------------
+   712                                  ; DisplayTotal
+   713                                  ;   Inputs: [NumEntries], [EntryArray]
+   714                                  ;   Outputs: displays to screen
+   715                                  ;   Calls: dspmsg, dspout, binasc
+   716                                  ;-------------------------------------------------------------------------
+   717                                  _DisplayTotal
+   718                                                  ;call _libDisplayTotal
+   719                                                  ;ret
+   720                                  
+   721 000007C5 50                        push ax       ; save data in registers
+   722 000007C6 53                        push bx
+   723 000007C7 51                        push cx
+   724 000007C8 52                        push dx
+   725                                  
+   726 000007C9 BA[5702]                  mov dx, msg_Total   ; print out msg_Total
+   727 000007CC E8(0000)                  call dspmsg         ; as well as the dollar sign
+   728 000007CF B224                      mov dl, '$'
+   729 000007D1 E8(0000)                  call dspout
+   730                                  
+   731 000007D4 BA0000                    mov dx, 0           ; clear registers
+   732 000007D7 B80000                    mov ax, 0
+   733 000007DA B90000                    mov cx, 0
+   734 000007DD BB0000                    mov bx, 0
+   735 000007E0 BB[0000]                  mov bx, EntryArray         ; bx points to the EntryArray
+   736 000007E3 803E[1E00]00              cmp byte [NumEntries], 0   ; check if there are any entries
+   737 000007E8 7421                      je .PrintTotal
+   738                                  
+   739                                  
+   740                                   .AmountLoop:
+   741 000007EA 8A0F                      mov cl, byte [bx]          ; store tag in cl
+   742 000007EC 43                        inc bx                     ; point to amount in current array cell
+   743 000007ED 80E101                    and cl, 00000001b          ; only keep the deposit/withdrawl bit
+   744 000007F0 80F901                    cmp cl, 1                  ; check if it is withdrawl
+   745 000007F3 7405                      je .NegativeAmount
+   746                                  
+   747 000007F5 0307                      add ax, [bx]               ; assume its a deposit, so add instead of subtract
+   748 000007F7 E90200                    jmp .EndOfLoop             ; from the running total
+   749                                  
+   750                                  
+   751                                   .NegativeAmount:            ; subtract amount from the total since it
+   752 000007FA 2B07                      sub ax, [bx]               ; is a withdrawl
+   753                                  
+   754                                  
+   755                                   .EndOfLoop:
+   756 000007FC FEC5                      inc ch                     ; Increment counter
+   757 000007FE 3A2E[1E00]                cmp ch, [NumEntries]       ; check if all entries have been added
+   758 00000802 7407                      je .PrintTotal
+   759 00000804 81C30200                  add bx, 2                  ; if not, point ot next array cell to be added
+   760 00000808 E9DFFF                    jmp .AmountLoop
+   761                                  
+   762                                   .PrintTotal:
+   763 0000080B BB[1F00]                  mov bx, Buffer             ; convert ax to ASCII to display
+   764 0000080E E8(0000)                  call binasc                ; readable number
+   765 00000811 BA[1F00]                  mov dx, Buffer             ; print the total to the screen
+   766 00000814 E8(0000)                  call dspmsg
+   767                                  
+   768 00000817 BA[3203]                  mov dx, msg_Cookie         ; display the fortune cookie message
+   769 0000081A E8(0000)                  call dspmsg
+   770                                  
+   771 0000081D 3D18FC                    cmp ax, -1000              ; check if total is less than -1000
+   772 00000820 7C0F                      jl .BigDebt
+   773                                    
+   774 00000822 3D0000                    cmp ax, 0                  ; check if total between -1000 and 0
+   775 00000825 7C10                      jl .SmallDebt
+   776                                  
+   777 00000827 3DE803                    cmp ax, 1000
+   778 0000082A 7C11                      jl .SmallPlus              ; check if total between 0 and 1000
+   779                                  
+   780 0000082C 3DE703                    cmp ax, 999                ; check if total greater/equal 1000
+   781 0000082F 7F12                      jg .BigPlus
+   782                                  
+   783                                  
+   784                                   .BigDebt:
+   785 00000831 BA[F503]                  mov dx, msg_BigDebt        ; print BigDebt message to screen
+   786 00000834 E90F00                    jmp .End
+   787                                   .SmallDebt:
+   788 00000837 BA[5404]                  mov dx, msg_SmallDebt      ; print SmallDebt message to screen
+   789 0000083A E90900                    jmp .End
+   790                                   .SmallPlus:
+   791 0000083D BA[8E04]                  mov dx, msg_SmallPlus      ; print SmallPlus message to screen
+   792 00000840 E90300                    jmp .End
+   793                                   .BigPlus                    ; print BigPlus message to screen
+   794 00000843 BA[E204]                  mov dx, msg_BigPlus
+   795                                  
+   796                                  
+   797                                   .End:
+   798 00000846 E8(0000)                  call dspmsg                ; restore original register data
+   799 00000849 5A                        pop dx
+   800 0000084A 59                        pop cx
+   801 0000084B 5B                        pop bx
+   802 0000084C 58                        pop ax
+   803 0000084D C3                        ret
