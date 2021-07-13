@@ -1,0 +1,85 @@
+     1                                  BITS 16
+     2                                  CR EQU 13
+     3                                  LF EQU 10
+     4                                  EXTERN dosxit, kbdin, dspmsg, binasc
+     5                                  
+     6                                  
+     7                                  
+     8                                  
+     9                                  
+    10                                  
+    11                                  
+    12                                  ; Define stack segment
+    13                                  SEGMENT stkseg STACK 
+    14 00000000 <res 00000200>          	resb   512
+    15                                  stacktop:
+    16                                  	resb 0
+    17                                  ; Define code segment 
+    18                                  SEGMENT code
+    19                                  
+    20                                  
+    21                                  
+    22                                  
+    23                                  
+    24                                  
+    25                                  
+    26                                  ; Variable declarations
+    27 00000000 <res 00000007>          pbuf    RESB 	7
+    28 00000007 0D0A24                  crlf    db 	CR,LF,'$'
+    29 0000000A 2046726571203D2024      freq_msg  db 	' Freq = $'
+    30 00000013 20487A2C2020436F75-     count_msg db 	' Hz,  Count = $'
+    31 0000001C 6E74203D2024       
+    32                                  
+    33                                  ..start
+    34                                  
+    35 00000022 8CC8                    		mov     ax, cs        ; Initialize DS register
+    36 00000024 8ED8                    		mov     ds, ax
+    37 00000026 B8[0000]                		mov	ax, stkseg
+    38 00000029 8ED0                    		mov ss, ax
+    39 0000002B BC[0002]                		mov sp, stacktop
+    40                                  MAIN:
+    41 0000002E B0B6                    		mov 	al,10110110b 	; Timer2, Load L+H, square wave, binary
+    42 00000030 E643                    		out 	43h,al       	; Write timer control byte        
+    43 00000032 E461                    		in 	al,61h        
+    44 00000034 0C03                    		or 	al,00000011b  	; Enable Timer2 & Turn on speaker
+    45 00000036 E661                    		out 	61h,al
+    46                                  .mloop
+    47 00000038 E8(0000)                		call 	kbdin
+    48 0000003B 3C30                    		cmp 	al,'0'   	; 0 to quit
+    49 0000003D 7445                    		je 	.mdone
+    50 0000003F 2C30                    		sub 	al,'0'        
+    51 00000041 B400                    		mov 	ah,0
+    52                                  
+    53 00000043 B108                    		mov 	cl,8     	; Freq * 256  (Hz)        
+    54 00000045 D3E0                    		shl 	ax,cl
+    55                                          			
+    56 00000047 BA[0A00]                		mov 	dx, freq_msg        
+    57 0000004A E8(0000)                		call 	dspmsg        
+    58 0000004D BB[0000]                		mov 	bx, pbuf        
+    59 00000050 E8(0000)                		call 	binasc        
+    60 00000053 BA[0000]                		mov 	dx, pbuf        
+    61 00000056 E8(0000)                		call 	dspmsg  	; Print Freq        
+    62 00000059 89C3                    		mov 	bx,ax        
+    63 0000005B B8DC34                  		mov 	ax,34DCh 	;DX:AX=1,193,180 (tics/sec)
+    64 0000005E BA1200                  		mov 	dx,12h   	;AX = ----------------------
+    65 00000061 F7F3                    		div 	bx       	;BX=Freq (1/sec)
+    66 00000063 BA[1300]                		mov 	dx, count_msg        
+    67 00000066 E8(0000)                		call 	dspmsg        
+    68 00000069 BB[0000]                		mov 	bx, pbuf        
+    69 0000006C E8(0000)                		call 	binasc        
+    70                                  
+    71                                  
+    72 0000006F BA[0000]                	mov	dx, pbuf        
+    73 00000072 E8(0000)                	call 	dspmsg  ; Print count        
+    74 00000075 BA[0700]                	mov	dx, crlf        
+    75 00000078 E8(0000)                	call	dspmsg 
+    76                                         
+    77 0000007B E642                    	out	42h,al   ; Write Low byte to Timer Channel 2        
+    78 0000007D 88E0                    	mov	al,ah              
+    79 0000007F E642                    	out	42h,al   ; Write High byte to Timer Channel 2        
+    80 00000081 E9B4FF                  	jmp	.mloop
+    81                                  .mdone
+    82 00000084 E461                    	in	al,61h           
+    83 00000086 24FC                    	and	al,11111100b 	; Turn off speaker        
+    84 00000088 E661                    	out	61h,al                
+    85 0000008A E8(0000)                	call	dosxit      	; Exit to DOSmain

@@ -1,0 +1,470 @@
+<html>
+<HEAD>
+<title>ECE 291 - Networking Lecture</title>
+</HEAD>
+
+<BODY bgcolor=ffffff>
+<center><table width=100% border=0>
+<tr><td align=left   valign=top width=33%>ECE291</td>
+    <td align=center valign=top width=34%>Computer Engineering II</td>
+    <td align=right  valign=top width=33%>J. W. Lockwood<br>Peter Johnson</td></tr></table>
+</center>
+
+<!-- <img src="../icon/construct.gif"> This page is under construction -->
+
+<br>
+<center><h1>Networking Lecture</h1></center>
+
+
+<H2>Today's Topics</h2>
+  <ul>
+  <li><a href="#net">Computer Networking</a>
+  <li><a href="#internet">Internet Protocols</a>
+  <li><a href="#sockets">IP Sockets Programming</a>
+  <li><a href="#netbios">NetBios Programming (Obsolete, Broken on Windows 2000)</a>
+  <li><a href="#adv">Advanced Networks</a>
+  </ul>
+<hr>
+
+<!-- Copyright 1999, John W Lockwood, All rights reserved
+     For usage information: contact lockwood@ipoint.vlsi.uiuc.edu or visit
+     http://ipoint.vlsi.uiuc.edu/~lockwood/
+     Internet and IP Sockets Copyright 2001, Peter Johnson, All rights reserved
+-->
+
+<h2><a name="net">Computer Networks</a></h2>
+<ul>
+<li><b>Local-Area and Wide-Area Networks (LANs/WANs)<br>
+    <b>Ethernet</b>: 10/100/1000 Mbps (Local-Area)</b><p>
+    <ul>
+    <li>Packets broadcast on shared media (the 'Ether')
+    <li>Coax (10Base-2): Terminators prevent signal reflection
+    <li>Twisted Pair (10/100/1000Base-T): Hubs or switches retransmit packets to links
+    <li>No Quality of Service (QoS) Guarentees
+    </ul><p>
+
+
+
+<li><b>Data Delivery</b><p>
+  <ul>
+  <li>Broadcast: One-to-all 
+  <li>Multicast: One-to-many (using group name)
+  <li>Unicast: One-to-one (each host has unique name)
+  </ul><p>
+<li><b>Data Transport Protocols</b> <p>
+  <ul>
+  <li>Datagram 
+    <ul>
+    <li>Packets may be lost 
+    <li>Packets may be reordered (except ATM)
+    <li>Can Broadcast, Multicast, Unicast 
+    <li>Example: UDP
+    </ul>
+  <li>Connection-Oriented 
+    <ul>
+    <li>Reliable connection between endpoints
+    <li>Lost packets are retransmitted
+    <li>Limited to point-to-point (Unicast) links
+    <li>Example: TCP
+    </ul>
+  </ul><p>
+<li><b>Programming Models</b> <p>
+  <ul>
+  <li>Client/Server (typical case)
+    <ul>
+    <li>Server is a centralized, permanent resource
+    <li>Clients are short-lived, stateless programs 
+    <li>Unicast Connections between server and client
+    </ul>
+  <li>Peer-to-Peer
+    <ul>
+    <li>All Programs share information 
+    <li>Multicast or broadcast data between hosts
+    </ul>
+  </ul> <p>
+
+<li><b>Network Adapter & Software</b> <p>
+  <ul>
+  <li>Hardware address filters 
+  <li>Interrupt On Incoming Packet
+  <li>Demultiplex incoming packet
+  <li>Deliver data to appropriate application / higher level protocol (eg IP)
+  </ul><p>
+</ul>
+<hr>
+
+<h2><a name="internet">Internet Protocols</a></h2>
+  <ul>
+  <li><b>Internet Protocol (IP) is a global standard</b><p>
+     <ul>
+     <li>Allows for a common address space across entire Internet
+     <li>32-bit address, but not every address is usable
+     <li>Packetized: data is split into segments for transmission
+     <li>Unreliable transport, so packets may be:
+       <ul>
+       <li>lost
+       <li>duplicated
+       <li>arrive out of order
+       </ul>
+     <li>Independent of underlying hardware (may run on ethernet, ATM, etc)
+     <li>We don't use IP directly, we mostly use two protocols built on it
+     </ul><p>
+  <li><b>UDP (UDP/IP) - <i>User Datagram Protocol</i></b><p>
+     <ul>
+     <li><b>Still unreliable</b>, but allows for multiplexing
+       <ul>
+       <li>Multiplexing = sharing of a single IP address by multiple programs
+       <li>Performed by using a <b>Port number</b>, a 16 bit unsigned integer
+       <li>Can have different source and destination ports
+       <li>The operating system demultiplexes each incoming packet:
+         <ul>
+         <li>looks at the port number
+         <li>sends the packet to the program listening on that port
+         </ul>
+       </ul>
+     <li>Unidirectional, application needs to establish reverse path
+     <li>Checksummed to prevent data corruption in packet
+       <ul>
+       <li>But is still unreliable (packets may be lost), just like pure IP
+       <li>We'd like a reliable protocol for sending large amounts of data
+       </ul>
+     </ul><p>
+  <li><b>TCP (TCP/IP) - <i>Transmission Control Protocol</i></b><p>
+     <ul>
+     <li>A <b>reliable</b> stream transport protocol
+       <ul>
+       <li>Streamed connection: don't really see individual packets
+       <li>Packets are guaranteed to arrive in the order sent, with no losses
+       <li>Provides a "virtual circuit" connection
+       <li>Full duplex once connection is established
+       <li>Disadvantage: variable delay (sometimes <em>very</em> variable)
+       </ul>
+     <li>Has multiplexing, just like UDP (16-bit port numbers)
+     <li>For how this actually works internally, take ECE 338!
+     </ul>
+  </ul>
+<hr>
+
+<h2><a name="sockets">IP "Sockets" Programming</a></h2>
+  <ul>
+  <li><b>So how do we actually <i>use</i> TCP/IP and UDP/IP?</b>
+    <ul>
+    <li>Most used: Sockets API
+      <ul>
+      <li>Introduced in 1981 in BSD 4.1 (Unix clone)
+      <li>Implemented as system library calls
+      <li>TCP and UDP interfaces very similar
+      <li>Portable Microsoft implementation: WinSock
+      </ul>
+    </ul><p>
+  <li><b>Byte Order</b>
+    <ul>
+    <li>As you all know, x86 machines are little endian.
+    <li>IP protocols use network order, which is big endian.
+    <li>Use functions to convert between "host" (little endian) byte order and network byte order:
+      <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-htonl">Socket_htonl</a>, <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-htons">Socket_htons</a> - convert 32-bit long, 16-bit short from host to network order
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-ntohl">Socket_ntohl</a>, <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-ntohs">Socket_ntohs</a> - vice-versa
+      </ul>
+    <li><b>All socket functions require parameters (particularly the address and port) in network order</b>
+    </ul><p>
+  <li><b><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-sockets-data-sockaddr">SOCKADDR</a> structure</b>
+    <ul>
+    <li>Contains both the port (SOCKADDR.Port) and the IP address (SOCKADDR.Address)
+    <li>Many sockets functions take a pointer to this structure instead of two seperate values
+    </ul><p>
+  <li><b>Address Conversion</b>
+    <ul>
+    <li>Need a way to convert to and from human-readable (ASCII) names to IP addresses.
+    <li>Some functions:
+      <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-inet-addr">Socket_inet_addr</a>: convert a dotted decimal ("127.0.0.1") into an 32-bit address
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-inet-ntoa">Socket_inet_ntoa</a>: convert an 32-bit address into dotted decimal ASCII
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-gethostbyname">Socket_gethostbyname</a>: converts an english host name ("www.uiuc.edu") into an IP address
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-gethostbyaddr">Socket_gethostbyaddr</a>: converts an IP address into an english hostname
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-gethostname">Socket_gethostname</a>: gets the local host's name (call gethostbyname to get the local IP)
+      </ul>
+    </ul><p>
+  <li><b>Socket Creation and Setup</b>
+    <ul>
+    <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-create">Socket_create</a>: creates a socket of a particular <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-sockets-constant-type">type</a> (called socket() in standard implementations)
+    <li>Waiting for connection (server) side:
+      <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-bind">Socket_bind</a>: binds a socket to a local IP address and port number
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-listen">Socket_listen</a>: puts socket into a passive state (waiting for a connection)
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-accept">Socket_accept</a>: accepts a new connection (TCP only)
+      </ul>
+    <li>Connecting (client) side:
+      <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-connect">Socket_connect</a>: connect to another (remote) socket (TCP only)
+      </ul>
+    </ul><p>
+  <li><b>Sending and Receiving Data</b>
+    <ul>
+    <li>TCP way (after connection is established)
+      <ul>
+      <li>TCP is streaming, so we can view the connection as just a stream of bytes
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-recv">Socket_recv</a>: receive data
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-send">Socket_send</a>: send data
+      </ul>
+    <li>UDP way
+      <ul>
+      <li>Each transmission is a new packet (unreliable, so it may be lost)
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-recvfrom">Socket_recvfrom</a>: gets a single incoming packet
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-sendto">Socket_sendto</a>: sends a single packet to another (remote) socket
+      </ul>
+    </ul><p>
+  <li><b>Closing a connection</b>
+    <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-close">Socket_close</a>: closes a socket completely (works for both TCP and UDP)
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-shutdown">Socket_shutdown</a>: closes one direction of the connection (TCP only)
+    </ul><p>
+  <li><b>Examples</b>
+    <ul>
+    <li>Sockets programming (and network programming in general) is difficult.
+    <li>Examples are *very* helpful!
+    <li>Because sockets are a standard interface, many examples are available on the web (basically all in C):
+      <ul>
+      <li><a href="http://www.stardust.com/winsock/ws_src.htm">WinSock application samples</a>
+      <li><a href="http://www.ibr.cs.tu-bs.de/~harbaum/docs/bsd-tut/sockets_7.html">Tutorial: Datagrams</a>
+      <li><a href="http://www.ibr.cs.tu-bs.de/~harbaum/docs/bsd-tut/sockets_8.html">Tutorial: Connections</a>
+      <li><a href="http://www.cis.temple.edu/~ingargio/cis307/readings/unix4.html">CIS 307: Sockets</a>
+      </ul>
+    <li>PModeLib also includes a few example programs in assembly (in the V:\ece291\pmodelib\examples directory)
+      <ul>
+      <li>tcpweb: retrieves the ECE 291 webpage and prints it to the screen
+      <li>tcpsrv: a simple TCP server
+      <li>tcpcli: a simple TCP client (connects to tcpsrv)
+      <li>udpsrv: a simple UDP server
+      <li>udpcli: a simple UDP client (connects to udpsrv)
+      </ul>
+    </ul><p>
+  <li><b>Tips</b>
+    <ul>
+    <li>Pick your protocol (TCP or UDP) carefully!
+      <ul>
+      <li>TCP tends to be best for:
+        <ul>
+        <li>transaction-based communications
+        <li>sending a large stream of data that must be received perfectly (eg a file)
+        </ul>
+      <li>UDP tends to be best for:
+        <ul>
+        <li>Anything realtime (game updates, sound files, etc)
+        </ul>
+      </ul>
+    <li>Structure data to transmit over the network: the smaller the better
+    <li>Use callback function (interrupt-driven network I/O) to not stop your main loop
+      <ul>
+      <li>PModeLib <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-setcallback">Socket_SetCallback</a> and <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-socket-addcallback">Socket_AddCallback</a> allow you to do this in PModeLib.
+      <li>You can trigger on different sockets for different <a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html#pmodelib-ref-sockets-constant-event">events</a>, but <em>all</em> events get handled by <em>one</em> callback function.
+      </ul>
+    </ul><p>
+  <li><b>References</b>
+    <ul>
+    <li>As sockets is a standard interface to using TCP/IP and UDP/IP, there are some excellent references:
+      <ul>
+      <li><a href="http://www.sockets.com/winsock.htm">Windows Sockets 1.1 Reference</a>
+      <li><a href="http://www-courses.cs.uiuc.edu/~cs338/">CS/ECE 338 Class Notes</a>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html">PModeLib documentation</a>
+      </ul>
+    <li>NOTES:
+      <ul>
+      <li><a href="http://courses.ece.uiuc.edu/ece291/books/pmode-tutorial/pmodelib-ref-sockets.html">PModeLib Sockets functions</a> are based on WinSock
+      <li>Note: some PModeLib versions of WinSock functions have been simplified to make them easier to use in assembly.
+      </ul>
+    </ul><p>
+  </ul>
+<hr>
+
+<h2><a name="netbios">NetBIOS (Obsolete, Broken on Windows 2000)</a></h2>
+  <ul>
+  <li><b>Local Area Network <i>service</i></b> <p>
+     <ul>
+     <li>Independent of underlying hardware 
+       <ul>
+       <li>Ethernet 
+       <li>Token Ring
+       <li>FDDI
+       </ul>
+     <li>Independent of underlying Protocols
+       <ul>
+       <li>Standalone packets
+       <li>Encapsulation in IP
+       </ul>
+     <li>Designed for Local Area Network 
+       <ul>
+       <li>Assumes single local network segment
+       </ul>
+     <li>Implementation 
+       <ul>
+       <li>DOS Packet Driver
+       <li>Serice provided by WinNT, Win95, WFWG
+       </ul>
+     </ul><p>
+
+  <li><b>NetBIOS Provides </b><p>
+     <ul>
+     <li>Naming Service 
+       <ul>
+       <li>Provides Unique names on Network
+       <li>Global Namespace
+       </ul><p>
+     
+     <li>Multiple types of communication
+       <ul>
+       <li>Datagram Broadcast
+       <li>Datagram Multicast
+       <li>Datagram Unicast
+       <li>Reliable Connection
+       </ul>
+     </ul> <p>
+
+
+  <li><b>Communication with NetBIOS </b> <p>
+     <ul>
+     <li>Interrupt 5C
+     </ul> <p>
+
+  <li><b>Network Control Block (NCB)</b> <p>
+    <ul>
+    <li>Basic NetBIOS Data Structure
+    <li>Command Field: Determines what action to take
+    <li>Inputs/Outputs/Pointers: All passed through NCB
+    </ul> <p>
+
+  <li><b>NetBIOS Response Methods</b> <p>
+    <ul>
+    <li>Blocking Functions: Wait until even occurs
+    <li>CallBack Functions: Register function to call when event occurs <br>
+        Operates just like an interrupt 
+    </ul> <p>
+
+  <li><b>NetBIOS Names</b> <p>
+    <ul> 
+    <li>16-character NetBIOS identifiers
+    <li>Local Names: Unique across the LAN (enforced by NetBIOS)
+    <li>Group Name: Shared among multiple machines (Multicast)
+    </ul> <p>
+
+<li><b>Examples</b> <p>
+  <ul>
+  <li><b>Broadcast/Multicast Datagrams</b>
+    <ul>
+    <li>Sender &amp; Receiver ADD NAME
+    <li><i>Loop while running</i>
+      <ul>
+      <li>Sender SENDS Broadcast Datagram
+      <li>Receiver RECEIVES Datagram
+      </ul>
+    <li>Sender &amp; Receiver REMOVE NAME
+    </ul> <p>
+  <li><b>Unicast Connection</b>
+    <ul>
+    <li>Sender & Receiver ADD NAME
+    <li>Receiver LISTENS 
+    <li>Sender CALLS <i>(Connection Established)</i>
+    <li><i>Loop while running</i>
+      <ul>
+      <li>Sender SENDS
+      <li>Receiver RECEIVES
+      </ul> 
+    <li>Sender or Receiver HANGUP <i>(Connection Terminated)</i>
+    <li>Sender & Receiver REMOVE NAME
+    </ul> 
+  
+</ul><p>
+
+  <li><b>Complete Documentation: 
+  </b><a href="../resources/nb.html">CBIS NetBios 
+        Programmers Reference </a><p>
+
+
+</ul>
+<hr>
+<ul>
+
+<li><b>Programming with NetBIOS (Doesn't work under Windows 2000)</b><p>
+
+  <ul>
+  <li><b>Lockwood's NetLIB: </b> 
+       <i>(API to make your life easy!)</i>
+    <ul>
+    <li><a href="../resources/readme.netlib.txt">NetLIB readme file </a>
+         
+    <li><a href="../resources/netlib.zip">NetLIB: ASM source 
+         code & examples</a>
+    </ul><p>
+
+  <li><b>Important Variables</b>
+
+    <ul>
+    <li><b>grp_name</b>: Multicast Group name <i>(Default=ECE291NetLib$$$$)</i>
+    <li><b>my_name</b>: My unique network id <i>(Default=ECE291Player0$$$)</i>
+    <li><b>TXBUffer</b>: Transmission buffer <br>
+         Load with data that you want to transmit then call <i>SendPacket</i>.
+    <li><b>RXBUffer</b>: Receive Buffer <Br>
+         Filled with data from incoming network packet network just
+         before your <i>netpost</i> function is called.
+    </ul><p>
+
+  <li><b>Procedures</b>
+    <ul>
+    <li><b>NetINIT</b>: Call at start of your program <p>
+
+    <li><b>netpost</b>: Callback function called 
+      whenever a datagram arrives.  <br>
+      <ul>
+      <li>Called with
+         <ul>
+         <li>BX = pointer to receive buffer
+         <li>AX = length of data
+         </ul>
+      <li>Because this routine
+          is called from an interrupt, it must:
+         <ul>
+         <li>Preserve all registers
+         <li>Avoid DOS and LIB291 calls
+         </ul>
+         </ul>
+<p>
+
+    <li><b>SendPacket</b>: Call with AX = Length of TXBuffer to transmit data
+<p>
+    <li><b>NetRelease</b>: Call at the end of your program
+</ul><p>
+<p>
+  <li><b>PModeLib also has similiar functions</b></li>
+  </ul>
+</ul>
+<hr>
+<ul>
+
+
+<h2><a name="adv">Advanced Networks </a></h2>
+  <ul>
+  <li><b>ATM: Asynchronous Transfer Mode</b> (Local & Wide-Area)
+    <ul>
+    <li>Data transmitted as 53-byte cells
+    <li>Messages transmitted using Adapatation Layer (AAL) 
+    <li>Transmits data at rate of 155 Mbps (OC3),
+            622 Mbps (OC12), 2.4 Gbps (OC48), or
+           10 Gbps (OC192)
+        <i>per host</i> and shared on virtual circuits.
+    <li>Preserves <i>Quality of Service</i>, allowing integrated data
+         (voice, video, IP) to carried over common network.
+    <li>See the <a href="http://ipoint.vlsi.uiuc.edu/">iPOINT Testbed</a> 
+          for information about ATM research on this campus.
+    </ul>
+  </ul><p>
+
+</ul>
+
+
+<hr>
+<a href="http://www.ece.uiuc.edu/~ece291/lecture/">
+<img src="../icon/go-back.gif" border=0 align=center width="16" height="17"> Return to ECE291 Lecture Index</a>
+<hr>
+</body>
+<address>
+<a href="copyright.html">Copyright</a> 1996, 1997, 1998 <a href="http://ipoint.vlsi.uiuc.edu/people/lockwood/lockwood.html">John Lockwood</a></address>
