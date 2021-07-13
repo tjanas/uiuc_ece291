@@ -1,0 +1,1330 @@
+     1                                  ; MP3 - Terrence Bradley Janas - October 15, 2001
+     2                                  ;
+     3                                  ;
+     4                                  ; MP3 - Chat 291
+     5                                  ;
+     6                                  ; Josh Potts, Fall 2001
+     7                                  ; Author: Ajay Ladsaria
+     8                                  ; University of Illinois, Urbana-Champaign
+     9                                  ; Dept. of Electrical and Computer Engineering
+    10                                  ;
+    11                                  ; Version 1.0
+    12                                  
+    13                                  	BITS	16
+    14                                  
+    15                                  
+    16                                  ;====== SECTION 1: Define constants =======================================
+    17                                  
+    18                                          CR      	EQU     0Dh
+    19                                          LF      	EQU     0Ah
+    20                                  
+    21                                  	ATTR_BORDER	EQU	10	; Light green is my favorite color,
+    22                                  	TOP_OFF		EQU	0	; so I chose this as the border color
+    23                                  	BOTTOM_OFF	EQU	13*160	;
+    24                                  	VIDEO_SEG	EQU	0B800h	; Our textmode video segment
+    25                                  
+    26                                  	COM1BASE	EQU	03F8h	; COM1 is IRQ4
+    27                                  	COM2BASE	EQU	02F8h	; COM2 is IRQ3
+    28                                  	BAUDRATE	EQU	12	; Communicates at 9600 baud
+    29                                  	PARAMS		EQU	03h	; and transfer size of 8 bits
+    30                                  
+    31                                  	RECV_BUF_LEN	EQU	8	; Length of recvBuf
+    32                                  ;====== SECTION 2: Declare external procedures ============================
+    33                                  
+    34                                  EXTERN  kbdine, dspout, dspmsg, mp1xit,ascbin,binasc
+    35                                  EXTERN  kbdin, dosxit
+    36                                  
+    37                                  EXTERN	mp3xit
+    38                                  EXTERN	libMP3Main, libDrawBorder, libInstallPort, libRemovePort, libPortISR
+    39                                  EXTERN	libInstallKeyboard, libRemoveKeyboard, libKeyboardISR, libGetNextKey
+    40                                  EXTERN	libTransmitKey, libDrawNewLine, libDrawBackspace, libTypeKey
+    41                                  
+    42                                  GLOBAL	shift, quit, nextKey, KeyboardV, PortV, recvPort, recvBuf
+    43                                  GLOBAL	bufhead, bufsize, colorLookup, myColorLookup, colorTable
+    44                                  GLOBAL	QwertyNames, QwertyShift
+    45                                  
+    46                                  ;You will have to write these functions
+    47                                  GLOBAL	MP3Main, DrawBorder, InstallPort, RemovePort, PortISR
+    48                                  GLOBAL	InstallKeyboard, RemoveKeyboard, KeyboardISR, GetNextKey
+    49                                  GLOBAL	TransmitKey, DrawNewLine, DrawBackspace, TypeKey
+    50                                  
+    51                                  
+    52                                  ;GLOBAL DisplayCard
+    53                                  
+    54                                  ;EXTERN Jumptable, Suittable
+    55                                  ;====== SECTION 3: Define stack segment ===================================
+    56                                  
+    57                                  SEGMENT stkseg STACK                    ; *** STACK SEGMENT ***
+    58 00000000 <res 00000200>                  resb      64*8
+    59                                  stacktop:
+    60                                          resb      0                     ; work around NASM bug
+    61                                  
+    62                                  ;====== SECTION 4: Define code segment ====================================
+    63                                  
+    64                                  SEGMENT code                            ; *** CODE SEGMENT ***
+    65                                  
+    66                                  ;====== SECTION 5: Declare variables for main procedure ===================
+    67 00000000 00                      shift		db 	0	;bit 1=LSHIFT pressed, bit 0=RSHIFT pressed
+    68 00000001 00                      quit		db 	0	;quit on nonzero
+    69 00000002 00                      nextKey		db	0	;most recent input
+    70 00000003 <res 00000004>          KeyboardV	resd 	1	;holds address of orig keyboardISR
+    71 00000007 <res 00000004>          PortV		resd 	1	;holds address of orig PortISR
+    72 0000000B 0000                    recvPort	dw	0
+    73 0000000D 00<rept>                recvBuf		times   RECV_BUF_LEN db	0	;receive buffer(FIFO)
+    74 00000015 0000                    bufhead		dw	0	;current first element of FIFO
+    75 00000017 0000                    bufsize		dw	0	;num elements in FIFO
+    76                                  
+    77 00000019 0000                    colorLookup	dw	0	;other user's color lookup value for colorTAble
+    78 0000001B 0000                    myColorLookup	dw	0	;my window's color lookup
+    79 0000001D 070102040306418283-     colorTable	db	07h, 01h, 02h, 04h, 03h, 06h, 41h, 82h, 83h, 87h 
+    80 00000026 87                 
+    81                                  
+    82 00000027 0D0A53656C65637420-     PortMsg	db CR, LF, "Select which port to receive in", CR, LF
+    83 00000030 776869636820706F72-
+    84 00000039 7420746F2072656365-
+    85 00000042 69766520696E0D0A   
+    86 0000004A 28312920434F4D310D-     	db "(1) COM1", CR, LF
+    87 00000053 0A                 
+    88 00000054 28322920434F4D320D-     	db "(2) COM2", CR, LF, '$'
+    89 0000005D 0A24               
+    90                                  
+    91                                  	
+    92                                  ;====== SECTION 6: Program initialization =================================
+    93                                  
+    94                                  ..start:
+    95 0000005F 8CC8                            mov     ax, cs                  ; Initialize Default Segment register
+    96 00000061 8ED8                            mov     ds, ax  
+    97 00000063 B8[0000]                        mov     ax, stkseg              ; Initialize Stack Segment register
+    98 00000066 8ED0                            mov     ss, ax
+    99 00000068 BC[0002]                        mov     sp, stacktop            ; Initialize Stack Pointer register
+   100                                  
+   101                                  ;====== SECTION 7: Main procedure =========================================
+   102                                  
+   103                                  MAIN:
+   104 0000006B BA[2700]                	mov	dx, PortMsg		;prompt user for COMM1 or 2
+   105 0000006E E8(0000)                	call	dspmsg
+   106 00000071 E8(0000)                	call	kbdin
+   107 00000074 3C31                    	cmp	al, '1'
+   108 00000076 7509                    	jne	.checkCom2
+   109 00000078 C706[0B00]F803          	mov	word [recvPort], COM1BASE
+   110 0000007E E90A00                  	jmp	.portFixed
+   111                                  
+   112                                  .checkCom2
+   113 00000081 3C32                    	cmp	al, '2'
+   114 00000083 75E6                    	jne	MAIN   
+   115 00000085 C706[0B00]F802          	mov	word [recvPort], COM2BASE
+   116                                  
+   117                                  .portFixed
+   118 0000008B B80300                  	mov	ax, 3			;int for textmode video
+   119 0000008E CD10                    	int	10h
+   120                                  
+   121 00000090 E80300                  	call 	MP3Main			;you get to write main this time
+   122                                  					;but did that last time too because
+   123                                  					;DoCommand was Main in disguise!
+   124                                  
+   125                                  ;	call	dosxit
+   126                                  ;.FinalExit:
+   127 00000093 E8(0000)                        call    mp3xit                  ; Exit to DOS
+   128                                  
+   129                                  
+   130                                  
+   131                                  
+   132                                  
+   133                                  ;-------------------------------------------------------------------------;
+   134                                  ; MP3Main								  ;
+   135                                  ;   Inputs: none							  ;
+   136                                  ;									  ;
+   137                                  ;   Outputs: none							  ;
+   138                                  ;									  ;
+   139                                  ;   Calls: InstallKeyboard, InstallPort, DrawBorder, GetNextKey,	  ;
+   140                                  ;	   TypeKey, RemovePort, RemoveKeyboard,				  ;
+   141                                  ;	   Interrupt 10h , AH = 02h					  ;
+   142                                  ;									  ;
+   143                                  ;   Purpose: Setup the ISRs and handle each key press			  ;
+   144                                  ;-------------------------------------------------------------------------;
+   145                                  MP3Main:
+   146                                  				;call 	libMP3Main
+   147                                  				;ret
+   148                                  
+   149                                   
+   150 00000096 50                       push ax			; Preserve registers
+   151 00000097 53                       push bx
+   152 00000098 51                       push cx
+   153 00000099 52                       push dx
+   154 0000009A 57                       push di
+   155 0000009B 56                       push si
+   156                                  
+   157 0000009C E8A201                   call InstallKeyboard		; Install the keyboard ISR
+   158 0000009F E8E100                   call InstallPort		; Install the serial port ISR
+   159                                  
+   160 000000A2 B90000                   mov cx, TOP_OFF		; Draw the text boxes starting at
+   161 000000A5 E84D00                   call DrawBorder		; the upper left corner of the screen
+   162                                  
+   163                                  
+   164                                  
+   165                                  
+   166 000000A8 B402                     mov ah, 02h			; Interrupt 10h : Set Cursor Position
+   167 000000AA 30FF                     xor bh, bh			; AH = 02h , BH = Display page
+   168 000000AC BA0101                   mov dx, 0101h			; DH:DL = Row:Column
+   169                                  
+   170 000000AF CD10                     int 10h			; We want cursor at row 1, col 1
+   171                                  
+   172                                  
+   173 000000B1 BEC208                   mov si, 2242			; si points to beginning of bottom text box
+   174 000000B4 BFA200                   mov di, 162			; di points to beginning of top text box
+   175                                  
+   176                                  
+   177                                  
+   178                                   ;--------------
+   179                                   .CheckKeypress:
+   180                                   ;--------------
+   181 000000B7 E83602                      call GetNextKey
+   182                                  
+   183 000000BA 803E[0100]01                cmp byte [quit], 1			; Quit if ESC was pressed
+   184 000000BF 7427                        je .Exit
+   185                                  
+   186 000000C1 3CC8                        cmp al, 200				; Check if F1 -> F10 was pressed
+   187 000000C3 721D                        jb .NotFunctionKey
+   188 000000C5 3CD1                        cmp al, 209
+   189 000000C7 7719                        ja .NotFunctionKey
+   190                                  
+   191                                  
+   192 000000C9 88C3                        mov bl, al				; bl = 200 -> 209 (F1 -> F10)
+   193 000000CB 80EBC8                      sub bl, 200				; Translate to colorTable index
+   194                                  
+   195 000000CE 81FA2008                    cmp dx, BOTTOM_OFF
+   196 000000D2 7407                        je .BottomColorKey
+   197                                  
+   198 000000D4 881E[1B00]                  mov byte [myColorLookup], bl	; Local user typed F1 -> F10, so set
+   199 000000D8 E9DCFF                      jmp .CheckKeypress			; text color for the top text box
+   200                                  
+   201                                  
+   202                                  
+   203                                   ;---------------
+   204                                   .BottomColorKey:
+   205                                   ;---------------
+   206 000000DB 881E[1900]                  mov byte [colorLookup], bl		; Other user typed F1 -> F10, so set
+   207 000000DF E9D5FF                      jmp .CheckKeypress			; text color for the bottom text box
+   208                                  
+   209                                  
+   210                                  
+   211                                   ;---------------
+   212                                   .NotFunctionKey:
+   213                                   ;---------------
+   214 000000E2 E8D502                      call TypeKey			; If the key wasn't a function key,
+   215 000000E5 E9CFFF                      jmp .CheckKeypress			; then type the key to the screen
+   216                                  
+   217                                  
+   218                                  
+   219                                   ;-----
+   220                                   .Exit:
+   221                                   ;-----
+   222 000000E8 E8EA00                      call RemovePort			; Uninstall interrupt service routines
+   223 000000EB E87001                      call RemoveKeyboard
+   224                                  
+   225 000000EE 5E                          pop si				; Restore registers
+   226 000000EF 5F                          pop di
+   227 000000F0 5A                          pop dx
+   228 000000F1 59                          pop cx
+   229 000000F2 5B                          pop bx
+   230 000000F3 58                          pop ax
+   231                                  
+   232 000000F4 C3                          ret
+   233                                  
+   234                                  
+   235                                  
+   236                                  
+   237                                  
+   238                                  ;-------------------------------------------------------------------------;
+   239                                  ; DrawBorder								  ;
+   240                                  ;   Inputs: cx = offset of upper left corner of location		  ;
+   241                                  ;		 to start displaying the text box			  ;
+   242                                  ;									  ;
+   243                                  ;   Outputs: none							  ;
+   244                                  ;									  ;
+   245                                  ;   Calls: none								  ;
+   246                                  ;									  ;
+   247                                  ;   Purpose: Draw the rectangular box that represents			  ;
+   248                                  ;	     the two text windows.					  ;
+   249                                  ;-------------------------------------------------------------------------;
+   250                                  DrawBorder  
+   251                                  					;call	libDrawBorder
+   252                                  					;ret
+   253                                  
+   254                                  
+   255                                  
+   256 000000F5 53                       push bx				; Preserve registers
+   257 000000F6 51                       push cx
+   258 000000F7 52                       push dx
+   259 000000F8 06                       push es
+   260                                  
+   261 000000F9 89CB                     mov bx, cx
+   262 000000FB B900B8                   mov cx, VIDEO_SEG			; ES points to video segment
+   263 000000FE 8EC1                     mov es, cx
+   264                                  
+   265 00000100 B60A                     mov dh, ATTR_BORDER			; DH = attribute of border,
+   266                                  					; DL = contains ASCII value of char
+   267                                   
+   268                                   
+   269                                   ;-------------
+   270                                   ; DrawULCorner
+   271                                   ;-------------
+   272 00000102 B2C9                    	mov dl, 0C9h			; Draw upper-left character
+   273 00000104 268917                  	mov [es:bx], dx			; for the top & bottom boxes
+   274 00000107 2689972008              	mov [es:bx + BOTTOM_OFF], dx
+   275 0000010C 81C30200                	add bx, 2
+   276                                  
+   277                                  
+   278                                  
+   279                                  
+   280 00000110 B14E                    	mov cl, 78			; CL = counter
+   281 00000112 B2CD                    	mov dl, 0CDh			; DL = top border character
+   282                                  
+   283                                   ;--------
+   284                                   .DrawTop:
+   285                                   ;--------
+   286 00000114 268917                  	mov [es:bx], dx			; Draw top border character,
+   287 00000117 2689972008              	mov [es:bx + BOTTOM_OFF], dx	; repeat 78 times
+   288 0000011C 81C30200                	add bx, 2
+   289 00000120 FEC9                    	dec cl
+   290 00000122 75F0                    	jnz .DrawTop
+   291                                  
+   292                                  
+   293                                  
+   294                                   ;-------------
+   295                                   ; DrawURCorner
+   296                                   ;-------------
+   297 00000124 B2BB                    	mov dl, 0BBh			; Draw upper-right character
+   298 00000126 268917                  	mov [es:bx], dx			; for the top & bottom boxes
+   299 00000129 2689972008              	mov [es:bx + BOTTOM_OFF], dx
+   300 0000012E 81C30200                	add bx, 2
+   301                                  
+   302                                  
+   303                                  
+   304 00000132 B10A                    	mov cl, 10			; CL = counter
+   305 00000134 B2BA                    	mov dl, 0BAh			; DL = side border character
+   306                                  
+   307                                   ;----------
+   308                                   .DrawSides:
+   309                                   ;----------
+   310 00000136 268917                  	mov [es:bx], dx			; Draw left-side border character,
+   311 00000139 2689972008              	mov [es:bx + BOTTOM_OFF], dx	; then add 158 to draw right-side
+   312 0000013E 81C39E00                	add bx, 158			; character, and then repeat for
+   313 00000142 268917                  	mov [es:bx], dx			; all 10 rows
+   314 00000145 2689972008              	mov [es:bx + BOTTOM_OFF], dx
+   315 0000014A 81C30200                	add bx, 2
+   316 0000014E FEC9                    	dec cl
+   317 00000150 75E4                    	jnz .DrawSides 
+   318                                  
+   319                                  
+   320                                  
+   321                                   ;-------------
+   322                                   ; DrawLLCorner
+   323                                   ;-------------
+   324 00000152 B2C8                    	mov dl, 0C8h			; Draw lower-left character
+   325 00000154 268917                  	mov [es:bx], dx			; for the top & bottom boxes
+   326 00000157 2689972008              	mov [es:bx + BOTTOM_OFF], dx
+   327 0000015C 81C30200                	add bx, 2
+   328                                  
+   329                                  
+   330                                  
+   331 00000160 B14E                    	mov cl, 78			; CL = counter
+   332 00000162 B2CD                    	mov dl, 0CDh			; DL = bottom border character
+   333                                  
+   334                                   ;-----------
+   335                                   .DrawBottom:
+   336                                   ;-----------
+   337 00000164 268917                  	mov [es:bx], dx			; Draw bottom border character,
+   338 00000167 2689972008              	mov [es:bx + BOTTOM_OFF], dx	; repeat 78 times
+   339 0000016C 81C30200                	add bx, 2
+   340 00000170 FEC9                    	dec cl
+   341 00000172 75F0                    	jnz .DrawBottom
+   342                                  
+   343                                  
+   344                                  
+   345                                   ;-------------
+   346                                   ; DrawLRCorner
+   347                                   ;-------------
+   348 00000174 B2BC                    	mov dl, 0BCh			; Draw lower-right character
+   349 00000176 268917                  	mov [es:bx], dx			; for the top & bottom boxes
+   350 00000179 2689972008              	mov [es:bx + BOTTOM_OFF], dx
+   351                                  
+   352 0000017E 07                      	pop es				; Restore registers
+   353 0000017F 5A                      	pop dx
+   354 00000180 59                      	pop cx
+   355 00000181 5B                      	pop bx
+   356                                  
+   357 00000182 C3                      	ret
+   358                                  
+   359                                  
+   360                                  
+   361                                  
+   362                                  
+   363                                  
+   364                                  
+   365                                  ;-------------------------------------------------------------------------;
+   366                                  ; InstallPort								  ;
+   367                                  ;   Inputs: none							  ;
+   368                                  ;									  ;
+   369                                  ;   Outputs: none							  ;
+   370                                  ;									  ;
+   371                                  ;   Calls: Interrupt 21h , AH = 25h					  ;
+   372                                  ;	   Interrupt 21h , AH = 35h					  ;
+   373                                  ;									  ;
+   374                                  ;   Purpose: Sets yp the baud rate, data size, saves old ISR address,	  ;
+   375                                  ;	     installs new ISR, unmasks all IRQ's, and sets up the	  ;
+   376                                  ;	     trigger for the interrupt					  ;
+   377                                  ;-------------------------------------------------------------------------;
+   378                                  InstallPort
+   379                                  				;call	libInstallPort
+   380                                  				;ret
+   381                                  
+   382 00000183 50                       push ax			; Preserve registers
+   383 00000184 53                       push bx
+   384 00000185 51                       push cx
+   385 00000186 52                       push dx
+   386 00000187 06                       push es
+   387                                  
+   388 00000188 B80B35                   mov ax, 350Bh			; To get & save original int vector, AH=35h
+   389 0000018B 813E[0B00]F802           cmp word [recvPort], COM2BASE	; and AL=interrupt number. 0Bh is our base
+   390 00000191 7402                     je .PreserveIRQ		; interrupt number for the COM port
+   391                                   
+   392 00000193 FEC0                     inc al				; If COM1, then it is interrupt 12
+   393                                   
+   394                                  
+   395                                  
+   396                                   ;------------
+   397                                   .PreserveIRQ:
+   398                                   ;------------
+   399 00000195 CD21                        int 21h			; ES:BX -> original interrupt handler
+   400 00000197 88C1                        mov cl, al			; Save interrupt number
+   401                                   
+   402 00000199 891E[0700]                  mov word [PortV], bx	; Save original vector in PortV
+   403 0000019D 8C06[0900]                  mov word [PortV + 2], es
+   404                                  
+   405                                  
+   406                                  
+   407                                  
+   408 000001A1 8B16[0B00]               mov dx, [recvPort]
+   409 000001A5 81C20300                 add dx, 3			; DX = COMxBASE+3
+   410 000001A9 B080                     mov al, 10000000b		; Set DLAB=1 by writing to COMxBASE+3
+   411 000001AB EE                       out dx, al
+   412                                  
+   413 000001AC 81EA0300                 sub dx, 3			; Since DLAB=1, we can now write divisor
+   414 000001B0 B00C                     mov al, BAUDRATE		; latch low byte at COMxBASE+0
+   415 000001B2 EE                       out dx, al			; Latch high byte defaults to 00h for us
+   416                                  
+   417 000001B3 81C20300                 add dx, 3			; Set data transfer size to 8 bits
+   418 000001B7 B003                     mov al, PARAMS
+   419 000001B9 EE                       out dx, al
+   420                                  
+   421                                  
+   422 000001BA 88C8                     mov al, cl			; Restore interrupt number for the COM port
+   423 000001BC B425                     mov ah, 25h			; Int 21h , AH=25h : Sets interrupt vector
+   424 000001BE BA[FB01]                 mov dx, PortISR		; DS:DX -> new interrupt handler
+   425 000001C1 CD21                     int 21h			; Install new ISR
+   426                                  
+   427 000001C3 30C0                     xor al, al			; Unmask all IRQ's
+   428 000001C5 E621                     out 21h, al
+   429                                  
+   430 000001C7 8B16[0B00]               mov dx, word [recvPort]	; Set least significant bit of Interrupt
+   431 000001CB B001                     mov al, 1			; Enable Register so ISR to be jumped to
+   432 000001CD 42                       inc dx				; only when Receiver Buffer is full
+   433 000001CE EE                       out dx, al
+   434                                  
+   435                                  
+   436 000001CF 07                       pop es				; Restore registers
+   437 000001D0 5A                       pop dx
+   438 000001D1 59                       pop cx
+   439 000001D2 5B                       pop bx
+   440 000001D3 58                       pop ax
+   441                                  
+   442 000001D4 C3                       ret	
+   443                                   
+   444                                   
+   445                                  
+   446                                  
+   447                                  ;-------------------------------------------------------------------------;
+   448                                  ; RemovePort								  ;
+   449                                  ;   Inputs: none							  ;
+   450                                  ;									  ;
+   451                                  ;   Outputs: none							  ;
+   452                                  ;									  ;
+   453                                  ;   Calls: Interrupt 21h , AH = 25h					  ;
+   454                                  ;									  ;
+   455                                  ;   Purpose: To restore old handler for the serial port being used	  ;
+   456                                  ;-------------------------------------------------------------------------;
+   457                                  RemovePort       
+   458                                  				;call	libRemovePort
+   459                                  				;ret
+   460                                  
+   461                                  
+   462                                  
+   463                                   
+   464 000001D5 50                       push ax			; Save registers
+   465 000001D6 52                       push dx
+   466 000001D7 1E                       push ds
+   467                                  
+   468                                  
+   469 000001D8 813E[0B00]F802           cmp word [recvPort], COM2BASE	; Let's find out what COM port
+   470 000001DE 7405                     je .CheckCom2			; we're using
+   471                                  
+   472                                   
+   473                                  
+   474                                   ;---------
+   475                                   ;CheckCom1
+   476                                   ;---------
+   477 000001E0 B00C                        mov al, 12			; IRQ4 = COM1
+   478 000001E2 E90200                      jmp .RestoreInt
+   479                                  
+   480                                  
+   481                                  
+   482                                   ;----------
+   483                                   .CheckCom2:
+   484                                   ;----------
+   485 000001E5 B00B                        mov al, 11			; IRQ 3 = COM2
+   486                                  
+   487                                  
+   488                                  
+   489                                   ;-----------
+   490                                   .RestoreInt:
+   491                                   ;-----------
+   492 000001E7 8B16[0700]                  mov dx, word [PortV]	; [PortV] contains original interrupt handler
+   493 000001EB 8E1E[0900]                  mov ds, word [PortV + 2]
+   494 000001EF B425                        mov ah, 25h			; Int 21h , AH=25h : Sets interrupt vector
+   495                                  				;    AL = interrupt number
+   496 000001F1 CD21                        int 21h			;    DS:DX --> new interrupt handler to use
+   497                                  
+   498                                  
+   499 000001F3 B018                        mov al, 18h			; Mask IRQs by writing 18h to port 21h
+   500 000001F5 E621                        out 21h, al			; as stated in the MP3 prompt
+   501                                  
+   502 000001F7 1F                          pop ds
+   503 000001F8 5A                          pop dx			; Restore registers
+   504 000001F9 58                          pop ax
+   505                                  
+   506 000001FA C3                          ret
+   507                                  
+   508                                  
+   509                                  
+   510                                  
+   511                                  
+   512                                  
+   513                                  
+   514                                  ;-------------------------------------------------------------------------;
+   515                                  ; PortISR								  ;
+   516                                  ;   Inputs: none							  ;
+   517                                  ;									  ;
+   518                                  ;   Outputs: none							  ;
+   519                                  ;									  ;
+   520                                  ;   Calls: none								  ;
+   521                                  ;									  ;
+   522                                  ;   Purpose: To add to the FIFO any data received over the serial port	  ;
+   523                                  ;-------------------------------------------------------------------------;
+   524                                  PortISR
+   525                                  				;jmp	libPortISR
+   526                                  
+   527                                  
+   528                                  
+   529 000001FB 50                       push ax				; Preserve registers
+   530 000001FC 53                       push bx
+   531 000001FD 52                       push dx
+   532 000001FE 1E                       push ds
+   533                                  
+   534 000001FF 8CC8                     mov ax, cs				; Make sure DS = CS
+   535 00000201 8ED8                     mov ds, ax
+   536                                  
+   537                                  
+   538                                  
+   539 00000203 8B16[0B00]               mov dx, word [recvPort]		; Make sure DLAB is cleared
+   540 00000207 81C20300                 add dx, 3				; and set transfer size to 8 bits
+   541 0000020B B003                     mov al, PARAMS
+   542 0000020D EE                       out dx, al
+   543 0000020E 81EA0300                 sub dx, 3
+   544                                  
+   545                                  
+   546 00000212 EC                       in al, dx				; Get ASCII char from serial port
+   547                                  
+   548 00000213 813E[1700]0800           cmp word [bufsize], RECV_BUF_LEN	; Check if buffer is full
+   549 00000219 7316                     jae .Exit				; If so, ignore any serial input
+   550                                  
+   551                                  
+   552 0000021B 8B1E[1700]               mov bx, word [bufsize]			; If not, determine the proper spot 
+   553 0000021F 031E[1500]               add bx, word [bufhead]			; to add the next entry to buffer
+   554 00000223 81FB0800                 cmp bx, RECV_BUF_LEN
+   555 00000227 7311                     jae .Adjust
+   556                                  
+   557                                  
+   558                                  
+   559                                   ;--------------
+   560                                   .WriteToBuffer:
+   561                                   ;--------------			
+   562                                  					; Enque the character at
+   563 00000229 8887[0D00]                  mov byte [recvBuf + bx], al		; [recvBuf + [bufsize]]
+   564 0000022D FF06[1700]                  inc word [bufsize]			; And update the size of buffer
+   565                                  
+   566                                  
+   567                                  
+   568                                  
+   569                                   ;-----
+   570                                   .Exit:
+   571                                   ;-----
+   572 00000231 B020                        mov al, 20h				; Send a generic end of interrupt
+   573 00000233 E620                        out 20h, al
+   574                                  
+   575 00000235 1F                          pop ds				; Restore registers
+   576 00000236 5A                          pop dx
+   577 00000237 5B                          pop bx
+   578 00000238 58                          pop ax
+   579                                  
+   580                                  
+   581 00000239 CF                          iret				; Use IRET for end of ISR
+   582                                  
+   583                                  
+   584                                  
+   585                                  
+   586                                   ;-------
+   587                                   .Adjust:
+   588                                   ;-------
+   589 0000023A 81EB0800                    sub bx, RECV_BUF_LEN		; Queue is circular
+   590 0000023E E9E8FF                      jmp .WriteToBuffer
+   591                                  
+   592                                  
+   593                                  
+   594                                  
+   595                                  
+   596                                  
+   597                                  ;-------------------------------------------------------------------------;
+   598                                  ; InstallKeyboard							  ;
+   599                                  ;   Inputs: none							  ;
+   600                                  ;									  ;
+   601                                  ;   Outputs: none							  ;
+   602                                  ;									  ;
+   603                                  ;   Calls: Interrupt 21h , AH = 25h					  ;
+   604                                  ;	   Interrupt 21h , AH = 35h					  ;
+   605                                  ;									  ;
+   606                                  ;   Purpose: To preserve original keyboard vector			  ;
+   607                                  ;	     and install new vector to KeyboardISR			  ;
+   608                                  ;-------------------------------------------------------------------------;
+   609                                  InstallKeyboard
+   610                                  				;call	libInstallKeyboard
+   611                                  				;ret
+   612                                  
+   613                                  
+   614 00000241 50                       push ax			; Save registers
+   615 00000242 53                       push bx
+   616 00000243 52                       push dx
+   617 00000244 06                       push es
+   618                                  
+   619 00000245 B80935                   mov ax, 3509h			; Int 21h , 35h : Get original int vector
+   620                                  				; Keyboard is interrupt 9
+   621 00000248 CD21                     int 21h			; ES:BX -> current interrupt handler
+   622                                  
+   623 0000024A 891E[0300]               mov word [KeyboardV], bx	; Save original interrupt handler
+   624 0000024E 8C06[0500]               mov word [KeyboardV + 2], es	; in KeyboardV
+   625                                  
+   626 00000252 B425                     mov ah, 25h			; Int 21h, 25h : Set Interrupt Vector
+   627 00000254 BA[7302]                 mov dx, KeyboardISR		; DS:DX -> new interrupt handler
+   628 00000257 CD21                     int 21h
+   629                                  
+   630 00000259 07                       pop es
+   631 0000025A 5A                       pop dx
+   632 0000025B 5B                       pop bx				; Restore registers
+   633 0000025C 58                       pop ax
+   634                                  
+   635 0000025D C3                       ret
+   636                                  
+   637                                  
+   638                                  
+   639                                  
+   640                                  ;-------------------------------------------------------------------------;
+   641                                  ; RemoveKeyboard							  ;
+   642                                  ;   Inputs: none							  ;
+   643                                  ;									  ;
+   644                                  ;   Outputs: none							  ;
+   645                                  ;									  ;
+   646                                  ;   Calls: Interrupt 21h , AH = 25h					  ;
+   647                                  ;									  ;
+   648                                  ;   Purpose: To restore original keyboard vector			  ;
+   649                                  ;-------------------------------------------------------------------------;
+   650                                  RemoveKeyboard
+   651                                  				;call	libRemoveKeyboard
+   652                                  				;ret
+   653                                  
+   654 0000025E 50                       push ax			; Save registers
+   655 0000025F 52                       push dx
+   656 00000260 1E                       push ds
+   657                                  
+   658 00000261 B009                     mov al, 9			; Keyboard is INT 9
+   659 00000263 8B16[0300]               mov dx, word [KeyboardV]	; DS:DX --> original interrupt handler
+   660 00000267 8E1E[0500]               mov ds, word [KeyboardV + 2]
+   661 0000026B B425                     mov ah, 25h			; Int 21h , AH=25h : Sets interrupt vector
+   662                                  
+   663 0000026D CD21                     int 21h
+   664                                  
+   665 0000026F 1F                       pop ds
+   666 00000270 5A                       pop dx				; Restore registers
+   667 00000271 58                       pop ax
+   668                                  
+   669 00000272 C3                       ret
+   670                                  
+   671                                  
+   672                                  
+   673                                  
+   674                                  
+   675                                  
+   676                                  ;-------------------------------------------------------------------------;
+   677                                  ; KeyboardISR								  ;
+   678                                  ;   Inputs: none							  ;
+   679                                  ;									  ;
+   680                                  ;   Outputs: none							  ;
+   681                                  ;									  ;
+   682                                  ;   Calls: none								  ;
+   683                                  ;									  ;
+   684                                  ;   Purpose: Set [nextKey] to be proper ASCII representation		  ;
+   685                                  ;	     of the character typed. Access the QwertyNames or		  ;
+   686                                  ;	     QwertyShift look-up table to determine the correct		  ;
+   687                                  ;	     ASCII representation of the input.				  ;
+   688                                  ;-------------------------------------------------------------------------;
+   689                                  KeyboardISR
+   690                                  				;jmp	libKeyboardISR
+   691                                  
+   692                                  
+   693                                  
+   694 00000273 1E                       push ds			; Save registers
+   695 00000274 50                       push ax
+   696 00000275 53                       push bx
+   697                                  
+   698                                  
+   699                                  
+   700 00000276 8CC8                     mov ax, cs			; Make sure DS = CS
+   701 00000278 8ED8                     mov ds, ax
+   702                                  
+   703                                  
+   704 0000027A E460                     in al, 60h			; Get scan code
+   705                                  	
+   706                                  
+   707 0000027C 3C01                     cmp al, 1			; Check if ESC was pressed
+   708 0000027E 7459                     je .ESCpressed
+   709                                  
+   710                                  
+   711 00000280 3C80                     cmp al, 10000000b		; Check if key press or release
+   712 00000282 7324                     jnb .KeyRelease		; highest bit of scancode set = release
+   713                                  
+   714                                  
+   715                                  
+   716                                  
+   717                                   ;---------------
+   718                                   ;LeftShiftPress:
+   719                                   ;---------------
+   720 00000284 3C2A                        cmp al, 42			; Check if LSHIFT pressed
+   721 00000286 7508                        jne .RightShiftPress
+   722 00000288 800E[0000]02                or byte [shift], 00000010b	; If so, set second least significant
+   723 0000028D E94E00                      jmp .Exit			; bit of [shift]
+   724                                  
+   725                                  
+   726                                  
+   727                                  
+   728                                   ;----------------
+   729                                   .RightShiftPress:
+   730                                   ;----------------
+   731 00000290 3C36                        cmp al, 54			; Check if RSHIFT pressed
+   732 00000292 752F                        jne .OtherKey
+   733 00000294 800E[0000]01                or byte[shift], 00000001b	; If so, set least significant
+   734 00000299 E94200                      jmp .Exit			; bit of [shift]
+   735                                  
+   736                                  
+   737                                  
+   738                                  
+   739                                   ;------------------
+   740                                   .RightShiftRelease:
+   741                                   ;------------------
+   742 0000029C 3CB6                        cmp al, 182			; Check if RSHIFT released
+   743 0000029E 753E                        jne .Exit
+   744 000002A0 8026[0000]02                and byte [shift], 00000010b
+   745 000002A5 E93600                      jmp .Exit
+   746                                  
+   747                                  
+   748                                  
+   749                                  
+   750                                   ;-----------
+   751                                   .KeyRelease:
+   752                                   ;-----------
+   753 000002A8 3CAA                        cmp al, 170			; Check if LSHIFT released
+   754 000002AA 75F0                        jne .RightShiftRelease
+   755 000002AC 8026[0000]01                and byte[shift], 00000001b	
+   756 000002B1 E92A00                      jmp .Exit
+   757                                  
+   758                                  
+   759                                  
+   760                                  
+   761                                   ;----------
+   762                                   .Uppercase:
+   763                                   ;----------
+   764 000002B4 88C3                        mov bl, al			; Here we have an upper-case
+   765 000002B6 30FF                        xor bh, bh			; keypress, so consult scancode table
+   766 000002B8 8AA7[E804]                  mov ah, [QwertyShift + bx]	; table and determine proper
+   767 000002BC 8826[0200]                  mov [nextKey], ah		; upper-case character to write
+   768 000002C0 E91B00                      jmp .Exit			; to [nextKey]
+   769                                  
+   770                                  
+   771                                  
+   772                                  
+   773                                   ;---------
+   774                                   .OtherKey:
+   775                                   ;---------
+   776 000002C3 803E[0000]00                cmp byte[shift], 0		; Check if normal key and shift pressed
+   777 000002C8 75EA                        jne .Uppercase			
+   778 000002CA 88C3                        mov bl, al			; If not, consult the scancode table
+   779 000002CC 30FF                        xor bh, bh			; and determine proper lower-case character
+   780 000002CE 8AA7[9304]                  mov ah, [QwertyNames + bx]	; to write to [nextKey]
+   781 000002D2 8826[0200]                  mov [nextKey], ah
+   782 000002D6 E90500                      jmp .Exit
+   783                                  
+   784                                  
+   785                                  
+   786                                  
+   787                                   ;-----------
+   788                                   .ESCpressed:
+   789                                   ;-----------
+   790 000002D9 C606[0100]01                mov byte [quit], 1		; Set [quit] to 1 if escape is pressed
+   791                                  
+   792                                  
+   793                                  
+   794                                   ;-----
+   795                                   .Exit:
+   796                                   ;-----
+   797 000002DE E461                        in al, 61h			; Send acknowledgement without
+   798 000002E0 0C80                        or al, 10000000b		; modifying the other bits
+   799 000002E2 E661                        out 61h, al
+   800 000002E4 247F                        and al, 01111111b
+   801 000002E6 E661                        out 61h, al
+   802 000002E8 B020                        mov al, 20h			; Send End-of-Interrupt signal
+   803 000002EA E620                        out 20h, al
+   804                                  
+   805                                  
+   806 000002EC 5B                          pop bx			; Restore registers
+   807 000002ED 58                          pop ax
+   808 000002EE 1F                          pop ds
+   809                                  
+   810 000002EF CF                          iret			; End of handler
+   811                                  
+   812                                  
+   813                                  
+   814                                  
+   815                                  
+   816                                  
+   817                                  
+   818                                  ;-------------------------------------------------------------------------;
+   819                                  ; GetNextKey								  ;
+   820                                  ;   Inputs: none							  ;
+   821                                  ;									  ;
+   822                                  ;   Outputs: al = ASCII of next key					  ;
+   823                                  ;	     dx = TOP_OFF if user typed, else BOTTOM_OFF		  ;
+   824                                  ;									  ;
+   825                                  ;   Calls: TransmitKey							  ;
+   826                                  ;									  ;
+   827                                  ;   Purpose: Polls two buffers to get the next key to be		  ;
+   828                                  ;	     displayed onto the screen.					  ;
+   829                                  ;									  ;
+   830                                  ;	     Exits if [quit] is nonzero; otherwise it loops until	  ;
+   831                                  ;	     [nextKey] is nonzero, or the [recvBuf] FIFO is non-empty.	  ;
+   832                                  ;									  ;
+   833                                  ;	     If [nextKey] is nonzero, then it transmits it to the other	  ;
+   834                                  ;	     user and clears [nextKey].					  ;
+   835                                  ;-------------------------------------------------------------------------;
+   836                                  GetNextKey 
+   837                                     					;call	libGetNextKey
+   838                                  					;ret
+   839                                  
+   840                                  
+   841 000002F0 56                       push si
+   842                                  
+   843                                  
+   844                                  
+   845                                   ;------------
+   846                                   .PollBuffers:
+   847                                   ;------------
+   848 000002F1 803E[0100]00                cmp byte [quit], 0			; Check if ESC was pressed
+   849 000002F6 7544                        jnz .Exit
+   850                                  
+   851 000002F8 803E[0200]00                cmp byte [nextKey], 0		; Check if there is a char to transmit
+   852 000002FD 752F                        jnz .Transmit
+   853                                  
+   854 000002FF 813E[1700]0000              cmp word [bufsize], 0		; Check if FIFO buffer is empty
+   855 00000305 74EA                        jz .PollBuffers
+   856                                  
+   857                                  
+   858 00000307 8B36[1500]                  mov si, word [bufhead]		; AL = char at the head of the buffer
+   859 0000030B 8A84[0D00]                  mov al, byte [recvBuf + si]
+   860 0000030F FF06[1500]                  inc word [bufhead]			; Increment the head of the buffer
+   861                                  
+   862 00000313 813E[1500]0800              cmp word [bufhead], RECV_BUF_LEN	; If bufhead is pointing to end of
+   863 00000319 730A                        jae .AdjustBufHead			; buffer, adjust its position
+   864                                  
+   865                                  
+   866                                  
+   867                                  
+   868                                   ;-------------
+   869                                   .ShrinkBuffer:
+   870                                   ;-------------
+   871 0000031B BA2008                      mov dx, BOTTOM_OFF			; Buffer holds chars to be displayed
+   872                                  					; in bottom text box.
+   873 0000031E FF0E[1700]                  dec word [bufsize]			; After writing character to buffer,
+   874 00000322 E91700                      jmp .Exit				; we can shrink size of buffer.
+   875                                  
+   876                                  
+   877                                  
+   878                                  
+   879                                   ;--------------
+   880                                   .AdjustBufHead:
+   881                                   ;--------------
+   882 00000325 C706[1500]0000              mov word [bufhead], 0		; Bufhead now points to the beginning
+   883 0000032B E9EDFF                      jmp .ShrinkBuffer			; of the FIFO buffer
+   884                                  
+   885                                  
+   886                                  
+   887                                  
+   888                                   ;---------
+   889                                   .Transmit:
+   890                                   ;---------
+   891 0000032E A0[0200]                    mov al, [nextKey]			; Transmit the character in al onto
+   892 00000331 E80A00                      call TransmitKey			; the serial port to other user
+   893 00000334 BA0000                      mov dx, TOP_OFF			; Since we typed char, display on top
+   894 00000337 C606[0200]00                mov byte [nextKey], 0		; Key is sent, so clear [nextKey]
+   895                                  
+   896                                  
+   897                                  
+   898                                  
+   899                                   ;-----
+   900                                   .Exit:
+   901                                   ;-----
+   902 0000033C 5E                          pop si
+   903                                  
+   904 0000033D C3                          ret
+   905                                  
+   906                                  
+   907                                  
+   908                                  
+   909                                  
+   910                                  ;-------------------------------------------------------------------------;
+   911                                  ; TransmitKey								  ;
+   912                                  ;   Inputs: al = ASCII character to transmit				  ;
+   913                                  ;									  ;
+   914                                  ;   Outputs: none							  ;
+   915                                  ;									  ;
+   916                                  ;   Calls: none								  ;
+   917                                  ;									  ;
+   918                                  ;   Purpose: Transmits the data in al onto the serial port		  ;
+   919                                  ;-------------------------------------------------------------------------;
+   920                                  TransmitKey
+   921                                  			;call	libTransmitKey
+   922                                  			;ret
+   923                                   
+   924 0000033E 52                       push dx
+   925                                  
+   926 0000033F 8B16[0B00]               mov dx, word [recvPort]	; send character to [recvPort]
+   927 00000343 EE                       out dx, al
+   928                                  
+   929 00000344 5A                       pop dx
+   930                                  
+   931 00000345 C3                       ret
+   932                                  
+   933                                  
+   934                                  ;-------------------------------------------------------------------------;
+   935                                  ; DrawNewLine								  ;
+   936                                  ;   Inputs: di = offset of a location in the line directly above	  ;
+   937                                  ;		 where the new line will go				  ;
+   938                                  ;	    dx = offset of upper left corner of text box		  ;
+   939                                  ;									  ;
+   940                                  ;   Outputs: al = row#							  ;
+   941                                  ;	     ah = col#							  ;
+   942                                  ;	     di = offset of next character				  ;
+   943                                  ;									  ;
+   944                                  ;   Calls: none								  ;
+   945                                  ;									  ;
+   946                                  ;   Purpose: Clears a line of text on the screen			  ;
+   947                                  ;-------------------------------------------------------------------------;
+   948                                  DrawNewLine
+   949                                  				;call	libDrawNewLine
+   950                                  				;ret
+   951                                  
+   952                                  
+   953 00000346 53                       push bx			; Save registers
+   954 00000347 51                       push cx
+   955 00000348 52                       push dx
+   956 00000349 06                       push es
+   957                                  
+   958 0000034A 89F8                     mov ax, di			; Divide offset by 80*2 and
+   959 0000034C B2A0                     mov dl, 160			; AL = row , AH = cols*2
+   960 0000034E F6F2                     div dl
+   961 00000350 FEC0                     inc al				; AL = next row
+   962                                  
+   963                                  
+   964 00000352 3C0B                     cmp al, 11			; There are only 10 rows in each chat box
+   965 00000354 7407                     je .AtBottom			; If we are at the bottom of either one
+   966 00000356 3C18                     cmp al, 24			; the next row is 10 rows above
+   967 00000358 7403                     je .AtBottom
+   968 0000035A E90200                   jmp .GetOffset
+   969                                  
+   970                                   ;---------
+   971                                   .AtBottom:
+   972                                   ;---------
+   973 0000035D 2C0A                    	sub al, 10		; adjust AL if we are already at the bottom
+   974                                  
+   975                                  
+   976                                   ;---------------
+   977                                   .GetOffset:
+   978                                   ;---------------
+   979 0000035F BA00B8                  	mov dx, VIDEO_SEG	; Set up ES to point to video segment
+   980 00000362 8EC2                    	mov es, dx
+   981                                  
+   982 00000364 88C1                    	mov cl, al		; Save the the row number
+   983 00000366 B2A0                    	mov dl, 160
+   984 00000368 F6E2                    	mul dl			; ax = offset of col 0 and the next row
+   985                                  
+   986 0000036A 050200                  	add ax, 2
+   987 0000036D 89C3                    	mov bx, ax
+   988 0000036F 89DF                    	mov di, bx		; di = offset of next character
+   989                                  
+   990                                  
+   991 00000371 B24E                    	mov dl, 78
+   992                                  
+   993                                   ;----------
+   994                                   .ClearChar:
+   995                                   ;----------
+   996 00000373 26C7070007              	mov word [es:bx], 0700h	; Clear all 78 characters in the next row
+   997 00000378 81C30200                	add bx, 2
+   998 0000037C FECA                    	dec dl
+   999 0000037E 75F3                    	jnz .ClearChar
+  1000                                  
+  1001 00000380 88C8                    	mov al, cl		; al = row#
+  1002 00000382 B401                    	mov ah, 1		; ah = col#
+  1003                                  
+  1004 00000384 07                      	pop es			; Restore registers
+  1005 00000385 5A                      	pop dx
+  1006 00000386 59                      	pop cx
+  1007 00000387 5B                      	pop bx
+  1008                                  
+  1009 00000388 C3                      	ret
+  1010                                  
+  1011                                  
+  1012                                  
+  1013                                  ;-------------------------------------------------------------------------;
+  1014                                  ; DrawBackspace								  ;
+  1015                                  ;   Inputs: di = offset of character from which to backspace		  ;
+  1016                                  ;	    dx = offset of upper left corner of text box		  ;
+  1017                                  ;									  ;
+  1018                                  ;   Outputs: di = offset of next character				  ;
+  1019                                  ;									  ;
+  1020                                  ;   Calls: Interrupt 10h , AH = 02h					  ;
+  1021                                  ;									  ;
+  1022                                  ;   Purpose: Backspaces and moves the cursor back			  ;
+  1023                                  ;-------------------------------------------------------------------------;
+  1024                                  DrawBackspace
+  1025                                  				;call	libDrawBackspace
+  1026                                  				;ret
+  1027                                   
+  1028 00000389 50                       push ax			; Save registers
+  1029 0000038A 53                       push bx
+  1030 0000038B 52                       push dx
+  1031 0000038C 06                       push es
+  1032                                   
+  1033 0000038D 89F8                     mov ax, di			; Divide offset by 80*2 and
+  1034 0000038F B2A0                     mov dl, 160			; AL = row , AH = col*2
+  1035 00000391 F6F2                     div dl
+  1036                                  
+  1037 00000393 80FC02                   cmp ah, 2			; Cannot backspace if we are at the
+  1038 00000396 741D                     je .Exit			; beginning of the row
+  1039                                  
+  1040                                  
+  1041 00000398 B900B8                   mov cx, VIDEO_SEG		; Set up ES to point to video segment
+  1042 0000039B 8EC1                     mov es, cx			; and erase the character to be backspaced to
+  1043 0000039D 26C745FE0000             mov word [es:di - 2], 0
+  1044 000003A3 81EF0200                 sub di, 2			; offset of next character
+  1045                                  
+  1046 000003A7 D0EC                     shr ah, 1			; AH = cols
+  1047 000003A9 88E2                     mov dl, ah
+  1048 000003AB FECA                     dec dl				; we want cursor one column to the left
+  1049 000003AD 88C6                     mov dh, al
+  1050 000003AF 30FF                     xor bh, bh			; Interrupt 10h : Set Cursor Position
+  1051                                  				;  AH = 02h
+  1052 000003B1 B402                     mov ah, 02h			;  BH = Display page
+  1053 000003B3 CD10                     int 10h			;  DH = Row
+  1054                                   				;  DL = Column
+  1055                                  
+  1056                                   ;-----
+  1057                                   .Exit:
+  1058                                   ;-----
+  1059                                  
+  1060 000003B5 07                      	pop es			; Restore registers
+  1061 000003B6 5A                      	pop dx
+  1062 000003B7 5B                      	pop bx
+  1063 000003B8 58                      	pop ax
+  1064                                  
+  1065 000003B9 C3                      	ret
+  1066                                  
+  1067                                  
+  1068                                  
+  1069                                  
+  1070                                  
+  1071                                  ;-------------------------------------------------------------------------;
+  1072                                  ; TypeKey								  ;
+  1073                                  ;   Inputs: al = input ASCII value					  ;
+  1074                                  ;	    di = offset of current location in top text box		  ;
+  1075                                  ;	    si = offset of current location in bottom text box		  ;
+  1076                                  ;	    dx = offset of upper left corner of the correct text box	  ;
+  1077                                  ;									  ;
+  1078                                  ;   Outputs: di = offset of next character in the top text box		  ;
+  1079                                  ;	     si = offset of next character in the bottom text box	  ;
+  1080                                  ;									  ;
+  1081                                  ;   Calls: DrawBackspace						  ;
+  1082                                  ;	   DrawNewLine							  ;
+  1083                                  ;	   Interrupt 10h , AH = 02h					  ;
+  1084                                  ;									  ;
+  1085                                  ;   Purpose: To display at the proper location the input ASCII value	  ;
+  1086                                  ;	     and to update the location of the cursor			  ;
+  1087                                  ;-------------------------------------------------------------------------;
+  1088                                  TypeKey
+  1089                                  			;call	libTypeKey
+  1090                                  			;ret
+  1091                                  
+  1092                                  
+  1093                                   
+  1094                                  
+  1095 000003BA 50                       push ax		; Save Registers
+  1096 000003BB 53                       push bx
+  1097 000003BC 52                       push dx
+  1098 000003BD 06                       push es
+  1099                                  
+  1100                                  
+  1101                                  
+  1102 000003BE 3C08                     cmp al, BKSP		; Check to see if input key is either
+  1103 000003C0 7407                     je .BackspaceKey	; a backspace, enter, or other key
+  1104 000003C2 3C0D                     cmp al, ENTR		; to be displayed
+  1105 000003C4 741B                     je .EnterKey
+  1106 000003C6 E94700                   jmp .OtherKey
+  1107                                  
+  1108                                  
+  1109                                  
+  1110                                   ;-------------
+  1111                                   .BackspaceKey:
+  1112                                   ;-------------
+  1113 000003C9 81FA0000                    cmp dx, TOP_OFF	; Check to see if backspace is to be displayed
+  1114 000003CD 740C                        je .TopBackspace	; in the top or bottom text box
+  1115                                  
+  1116                                  
+  1117                                      ;---------------
+  1118                                      ;BottomBackspace
+  1119                                      ;---------------
+  1120 000003CF 57                             push di			; Preserve original di
+  1121 000003D0 89F7                           mov di, si		; DrawBackspace uses di as its offset
+  1122 000003D2 E8B4FF                         call DrawBackspace
+  1123 000003D5 89FE                           mov si, di		; Store new offset
+  1124 000003D7 5F                             pop di			; and restore di
+  1125 000003D8 E93000                         jmp .Exit
+  1126                                   
+  1127                                  
+  1128                                      ;-------------
+  1129                                      .TopBackspace:
+  1130                                      ;-------------
+  1131 000003DB E8ABFF                         call DrawBackspace	; DrawBackspace automatically stores new
+  1132 000003DE E92A00                         jmp .Exit		; offset in di. We are done.
+  1133                                  
+  1134                                  
+  1135                                  
+  1136                                  
+  1137                                  
+  1138                                   ;---------
+  1139                                   .EnterKey:
+  1140                                   ;---------
+  1141 000003E1 30FF                        xor bh, bh			; display page = 0 for displaying cursor
+  1142 000003E3 81FA0000                    cmp dx, TOP_OFF		; Check to see which text box to use
+  1143 000003E7 7414                        je .TopEnter
+  1144                                  
+  1145                                  
+  1146                                      ;-----------
+  1147                                      ;BottomEnter
+  1148                                      ;-----------
+  1149 000003E9 57                             push di			; Copy si to di because
+  1150 000003EA 89F7                           mov di, si		; DrawNewLine uses di as offset
+  1151 000003EC E857FF                         call DrawNewLine		; New offset generated is stored in si
+  1152 000003EF 89FE                           mov si, di
+  1153 000003F1 5F                             pop di
+  1154 000003F2 88E2                           mov dl, ah		; DrawNewLine already gives us
+  1155 000003F4 88C6                           mov dh, al		; al=row# , ah=col#, di=new offset
+  1156 000003F6 B402                           mov ah, 02h		; To display cursor at new offset:
+  1157 000003F8 CD10                           int 10h			; ah=02h, dh=row#, dl=col#
+  1158 000003FA E90E00                         jmp .Exit
+  1159                                  
+  1160                                  
+  1161                                      ;---------
+  1162                                      .TopEnter:
+  1163                                      ;---------
+  1164 000003FD E846FF                         call DrawNewLine		; di, dx already set for DrawNewLine
+  1165 00000400 88E2                           mov dl, ah		; Set the inputs of Int 10h to display cursor
+  1166 00000402 88C6                           mov dh, al		; with the row and col numbers that
+  1167 00000404 B402                           mov ah, 02h		; DrawNewLine gives us
+  1168 00000406 CD10                           int 10h
+  1169 00000408 E90000                         jmp .Exit
+  1170                                  
+  1171                                  
+  1172                                  
+  1173                                  
+  1174                                   ;-----
+  1175                                   .Exit:
+  1176                                   ;-----
+  1177 0000040B 07                          pop es			; Restore registers
+  1178 0000040C 5A                          pop dx
+  1179 0000040D 5B                          pop bx
+  1180 0000040E 58                          pop ax
+  1181 0000040F C3                          ret
+  1182                                  
+  1183                                  
+  1184                                  
+  1185                                  
+  1186                                   ;---------
+  1187                                   .OtherKey:
+  1188                                   ;---------
+  1189 00000410 BB00B8                      mov bx, VIDEO_SEG		; Set up ES to point to video segment
+  1190 00000413 8EC3                        mov es, bx
+  1191 00000415 81FA2008                    cmp dx, BOTTOM_OFF		; Check if key belongs in top or bottom box
+  1192 00000419 7439                        je .BottomOther
+  1193                                   
+  1194                                  
+  1195                                      ;-----------
+  1196                                      ;TopOtherKey		; Here we write the char & cursor in top box
+  1197                                      ;-----------
+  1198 0000041B 8B1E[1B00]                     mov bx, word [myColorLookup]	; Move attribute byte into high byte
+  1199 0000041F 8AA7[1D00]                     mov ah, byte [colorTable + bx]	; at the current offset.
+  1200 00000423 268905                         mov word [es:di], ax		; AL already holds character byte
+  1201                                  
+  1202 00000426 89F8                           mov ax, di		; Divide offset by 80*2 and
+  1203 00000428 B3A0                           mov bl, 160		; AL = row, AH = cols*2
+  1204 0000042A F6F3                           div bl
+  1205                                  
+  1206 0000042C 30FF                           xor bh, bh		; Set BH=0 to display page 0 for cursor
+  1207 0000042E 80FC9C                         cmp ah, 156		; Check to see if we are currently at
+  1208 00000431 750E                           jne .NotEndofTopRow	; the end of a row.
+  1209                                  
+  1210 00000433 E810FF                         call DrawNewLine
+  1211 00000436 88E2                           mov dl, ah
+  1212 00000438 88C6                           mov dh, al		; If so, then draw a new line
+  1213 0000043A B402                           mov ah, 02h		; and move cursor to the new location
+  1214 0000043C CD10                           int 10h
+  1215 0000043E E9CAFF                         jmp .Exit
+  1216                                  
+  1217                                         
+  1218                                         ;---------------
+  1219                                         .NotEndofTopRow:
+  1220                                         ;---------------
+  1221 00000441 81C70200                          add di, 2		; If we are here, we are not at the end of
+  1222 00000445 D0EC                              shr ah, 1		; the row. New offset is one character
+  1223 00000447 FEC4                              inc ah		; to the right. AH=cols*2, so divide by 2
+  1224 00000449 88E2                              mov dl, ah		; and increment to point to new column
+  1225 0000044B 88C6                              mov dh, al
+  1226 0000044D B402                              mov ah, 02h
+  1227 0000044F CD10                              int 10h
+  1228 00000451 E9B7FF                            jmp .Exit
+  1229                                  
+  1230                                  
+  1231                                  
+  1232                                      ;------------
+  1233                                      .BottomOther:	     ; Here we write the char & cursor in bottom box
+  1234                                      ;------------
+  1235 00000454 8B1E[1900]                     mov bx, word [colorLookup]	; Move attribute byte into high byte
+  1236 00000458 8AA7[1D00]                     mov ah, byte [colorTable + bx]	; at the current offset.
+  1237 0000045C 268904                         mov word [es:si], ax		; AL already holds character byte
+  1238                                  
+  1239 0000045F 89F0                           mov ax, si		; Divide offset by 80*2 and
+  1240 00000461 B3A0                           mov bl, 160		; AL = row, AH = cols*2
+  1241 00000463 F6F3                           div bl
+  1242                                   
+  1243 00000465 30FF                           xor bh, bh		; Set BH=0 to display page 0 for cursor
+  1244 00000467 80FC9C                         cmp ah, 156		; Check to see if we are currently at
+  1245 0000046A 7514                           jne .NotEndofBotRow	; the end of a row.
+  1246                                  
+  1247 0000046C 57                             push di
+  1248 0000046D 89F7                           mov di, si		; DrawNewLine uses di as its offset
+  1249 0000046F E8D4FE                         call DrawNewLine
+  1250 00000472 89FE                           mov si, di
+  1251 00000474 5F                             pop di
+  1252 00000475 88E2                           mov dl, ah		; Set the row and column numbers
+  1253 00000477 88C6                           mov dh, al		; using the values that DrawNewLine
+  1254 00000479 B402                           mov ah, 02h		; gives us.
+  1255 0000047B CD10                           int 10h
+  1256 0000047D E98BFF                         jmp .Exit
+  1257                                  
+  1258                                  
+  1259                                         ;---------------
+  1260                                         .NotEndofBotRow:
+  1261                                         ;---------------
+  1262 00000480 81C60200                          add si, 2		; If we are here, we are not at the end of
+  1263 00000484 D0EC                              shr ah, 1		; the row. New offset is one character
+  1264 00000486 FEC4                              inc ah		; to the right. AH=cols*2, so divide by 2
+  1265 00000488 88E2                              mov dl, ah		; and increment to point to new column
+  1266 0000048A 88C6                              mov dh, al
+  1267 0000048C B402                              mov ah, 02h
+  1268 0000048E CD10                              int 10h
+  1269 00000490 E978FF                            jmp .Exit
+  1270                                  
+  1271                                  
+  1272                                  
+  1273                                  
+  1274                                  
+  1275                                  
+  1276                                  ;====== SECTION 8: Stuff we would have preferred to use %include for ======
+  1277                                  
+  1278                                  
+  1279                                  LSHIFT	equ	6
+  1280                                  RSHIFT	equ	7
+  1281                                  BKSP	equ	8
+  1282                                  ENTR	equ	13
+  1283                                  ESC	equ	27
+  1284                                  DEL	equ	10
+  1285                                  HOME	equ	11
+  1286                                  UP	equ	24
+  1287                                  PGUP	equ	12
+  1288                                  LEFT	equ	27
+  1289                                  RIGHT	equ	26
+  1290                                  END	equ	14
+  1291                                  DOWN	equ	25
+  1292                                  PGDN	equ	15
+  1293                                  INS	equ	16
+  1294                                  SPACE	equ	17
+  1295                                  
+  1296                                  QwertyNames
+  1297 00000493 00                      	db	0	; filler
+  1298 00000494 1B3132333435363738-     	db	ESC,'1','2','3','4','5','6','7','8','9','0','-','=',BKSP
+  1299 0000049D 39302D3D08         
+  1300 000004A2 007177657274797569-     	db	0, 'q','w','e','r','t','y','u','i','o','p','[',']',ENTR
+  1301 000004AB 6F705B5D0D         
+  1302 000004B0 006173646667686A6B-     	db	0,'a','s','d','f','g','h','j','k','l',';',"'","`"
+  1303 000004B9 6C3B2760           
+  1304 000004BD 065C7A786376626E6D-     	db	LSHIFT,'\','z','x','c','v','b','n','m',",",'.','/',RSHIFT,'*'
+  1305 000004C6 2C2E2F072A         
+  1306 000004CB 002000C8C9CACBCCCD-     	db	0, ' ', 0, 200,201,202,203,204,205,206,207,208,209 ; F1-F10
+  1307 000004D4 CECFD0D1           
+  1308 000004D8 0000                    	db	0,0	; numlock, scroll lock
+  1309 000004DA 0B180C2D                	db	HOME, UP, PGUP, '-'
+  1310 000004DE 1B001A2B                	db	LEFT, 0, RIGHT, '+'
+  1311 000004E2 0E190F10                	db	END, DOWN, PGDN, INS
+  1312 000004E6 0A00                    	db	DEL, 0; sysrq
+  1313                                  
+  1314                                  QwertyShift
+  1315 000004E8 00                      	db	0	; filler
+  1316 000004E9 1B21402324255E262A-     	db	ESC,'!','@','#','$','%','^','&','*','(',')','_','+',BKSP
+  1317 000004F2 28295F2B08         
+  1318 000004F7 005157455254595549-     	db	0, 'Q','W','E','R','T','Y','U','I','O','P','{','}',ENTR
+  1319 00000500 4F507B7D0D         
+  1320 00000505 004153444647484A4B-     	db	0,'A','S','D','F','G','H','J','K','L',':','"','~'
+  1321 0000050E 4C3A227E           
+  1322 00000512 067C5A584356424E4D-     	db	LSHIFT,'|','Z','X','C','V','B','N','M',"<",'>','?',RSHIFT,'*'
+  1323 0000051B 3C3E3F072A         
+  1324 00000520 002000C8C9CACBCCCD-     	db	0, ' ', 0, 200, 201,202,203,204,205,206,207,208,209 ; F1-F10
+  1325 00000529 CECFD0D1           
+  1326 0000052D 0000                    	db	0,0	; numlock, scroll lock
+  1327 0000052F 0B180C2D                	db	HOME, UP, PGUP, '-'
+  1328 00000533 1B001A2B                	db	LEFT, 0, RIGHT, '+'
+  1329 00000537 0E190F10                	db	END, DOWN, PGDN, INS
+  1330 0000053B 0A00                    	db	DEL, 0; sysrq

@@ -1,0 +1,304 @@
+     1                                  ; MP3 - Your Name - Today's Date
+     2                                  ;
+     3                                  ;
+     4                                  ; MP3 - Chat 291 - SOLUTION
+     5                                  ;
+     6                                  ; Josh Potts, Fall 2001
+     7                                  ; Author: Ajay Ladsaria
+     8                                  ; University of Illinois, Urbana-Champaign
+     9                                  ; Dept. of Electrical and Computer Engineering
+    10                                  ;
+    11                                  ; Version 1.0
+    12                                  
+    13                                  	BITS	16
+    14                                  
+    15                                  
+    16                                  ;====== SECTION 1: Define constants =======================================
+    17                                  
+    18                                          CR      	EQU     0Dh
+    19                                          LF      	EQU     0Ah
+    20                                  
+    21                                  	ATTR_BORDER	EQU	6	;Feel free to change this.
+    22                                  	TOP_OFF		EQU	0	;libcode isn't currently robust enough
+    23                                  	BOTTOM_OFF	EQU	13*160	;to handle changes in these
+    24                                  
+    25                                  	COM1BASE	EQU	03F8h
+    26                                  	COM2BASE	EQU	02F8h
+    27                                  	BAUDRATE	EQU	12
+    28                                  	PARAMS		EQU	03h
+    29                                  
+    30                                  	RECV_BUF_LEN	EQU	8	
+    31                                  ;====== SECTION 2: Declare external procedures ============================
+    32                                  
+    33                                  EXTERN  kbdine, dspout, dspmsg, mp1xit,ascbin,binasc
+    34                                  EXTERN  kbdin, dosxit
+    35                                  
+    36                                  EXTERN	mp3xit
+    37                                  EXTERN	libMP3Main, libDrawBorder, libInstallPort, libRemovePort, libPortISR
+    38                                  EXTERN	libInstallKeyboard, libRemoveKeyboard, libKeyboardISR, libGetNextKey
+    39                                  EXTERN	libTransmitKey, libDrawNewLine, libDrawBackspace, libTypeKey
+    40                                  
+    41                                  GLOBAL	shift, quit, nextKey, KeyboardV, PortV, recvPort, recvBuf
+    42                                  GLOBAL	bufhead, bufsize, colorLookup, myColorLookup, colorTable
+    43                                  GLOBAL	QwertyNames, QwertyShift
+    44                                  
+    45                                  ;You will have to write these functions
+    46                                  GLOBAL	MP3Main, DrawBorder, InstallPort, RemovePort, PortISR
+    47                                  GLOBAL	InstallKeyboard, RemoveKeyboard, KeyboardISR, GetNextKey
+    48                                  GLOBAL	TransmitKey, DrawNewLine, DrawBackspace, TypeKey
+    49                                  
+    50                                  
+    51                                  ;GLOBAL DisplayCard
+    52                                  
+    53                                  ;EXTERN Jumptable, Suittable
+    54                                  ;====== SECTION 3: Define stack segment ===================================
+    55                                  
+    56                                  SEGMENT stkseg STACK                    ; *** STACK SEGMENT ***
+    57 00000000 <res 00000200>                  resb      64*8
+    58                                  stacktop:
+    59                                          resb      0                     ; work around NASM bug
+    60                                  
+    61                                  ;====== SECTION 4: Define code segment ====================================
+    62                                  
+    63                                  SEGMENT code                            ; *** CODE SEGMENT ***
+    64                                  
+    65                                  ;====== SECTION 5: Declare variables for main procedure ===================
+    66 00000000 00                      shift		db 	0	;bit 1=LSHIFT pressed, bit 0=RSHIFT pressed
+    67 00000001 00                      quit		db 	0	;quit on nonzero
+    68 00000002 00                      nextKey		db	0	;most recent input
+    69 00000003 <res 00000004>          KeyboardV	resd 	1	;holds address of orig keyboardISR
+    70 00000007 <res 00000004>          PortV		resd 	1	;holds address of orig PortISR
+    71 0000000B 0000                    recvPort	dw	0
+    72 0000000D 00<rept>                recvBuf		times   RECV_BUF_LEN db	0	;receive buffer(FIFO)
+    73 00000015 0000                    bufhead		dw	0	;current first element of FIFO
+    74 00000017 0000                    bufsize		dw	0	;num elements in FIFO
+    75                                  
+    76 00000019 0000                    colorLookup	dw	0	;other user's color lookup value for colorTAble
+    77 0000001B 0000                    myColorLookup	dw	0	;my window's color lookup
+    78 0000001D 070102040306418283-     colorTable	db	07h, 01h, 02h, 04h, 03h, 06h, 41h, 82h, 83h, 87h 
+    79 00000026 87                 
+    80                                  
+    81 00000027 0D0A53656C65637420-     PortMsg	db CR, LF, "Select which port to receive in", CR, LF
+    82 00000030 776869636820706F72-
+    83 00000039 7420746F2072656365-
+    84 00000042 69766520696E0D0A   
+    85 0000004A 28312920434F4D310D-     	db "(1) COM1", CR, LF
+    86 00000053 0A                 
+    87 00000054 28322920434F4D320D-     	db "(2) COM2", CR, LF, '$'
+    88 0000005D 0A24               
+    89                                  
+    90                                  	
+    91                                  ;====== SECTION 6: Program initialization =================================
+    92                                  
+    93                                  ..start:
+    94 0000005F 8CC8                            mov     ax, cs                  ; Initialize Default Segment register
+    95 00000061 8ED8                            mov     ds, ax  
+    96 00000063 B8[0000]                        mov     ax, stkseg              ; Initialize Stack Segment register
+    97 00000066 8ED0                            mov     ss, ax
+    98 00000068 BC[0002]                        mov     sp, stacktop            ; Initialize Stack Pointer register
+    99                                  
+   100                                  ;====== SECTION 7: Main procedure =========================================
+   101                                  
+   102                                  MAIN:
+   103 0000006B BA[2700]                	mov	dx, PortMsg		;prompt user for COMM1 or 2
+   104 0000006E E8(0000)                	call	dspmsg
+   105 00000071 E8(0000)                	call	kbdin
+   106 00000074 3C31                    	cmp	al, '1'
+   107 00000076 7509                    	jne	.checkCom2
+   108 00000078 C706[0B00]F803          	mov	word [recvPort], COM1BASE
+   109 0000007E E90A00                  	jmp	.portFixed
+   110                                  
+   111                                  .checkCom2
+   112 00000081 3C32                    	cmp	al, '2'
+   113 00000083 75E6                    	jne	MAIN   
+   114 00000085 C706[0B00]F802          	mov	word [recvPort], COM2BASE
+   115                                  
+   116                                  .portFixed
+   117 0000008B B80300                  	mov	ax, 3			;int for textmode video
+   118 0000008E CD10                    	int	10h
+   119                                  
+   120 00000090 E80300                  	call 	MP3Main			;you get to write main this time
+   121                                  					;but did that last time too because
+   122                                  					;DoCommand was Main in disguise!
+   123                                  
+   124                                  ;	call	dosxit
+   125                                  ;.FinalExit:
+   126 00000093 E8(0000)                        call    mp3xit                  ; Exit to DOS
+   127                                  
+   128                                  	
+   129                                  
+   130                                  ; MP3Main
+   131                                  ; No inputs or outputs
+   132                                  ; Normal Main loop for MP3
+   133                                  MP3Main:
+   134 00000096 E8(0000)                	call 	libMP3Main
+   135 00000099 C3                      	ret
+   136                                  
+   137                                  ; DrawBorder  
+   138                                  ; No inputs or outputs
+   139                                  ;
+   140                                  DrawBorder  
+   141 0000009A E8(0000)                	call	libDrawBorder
+   142 0000009D C3                      	ret
+   143                                  
+   144                                  
+   145                                  
+   146                                  ; InstallPort
+   147                                  ; Installs new vector to PortISR, saving old vector
+   148                                  ; No inputs/Outputs
+   149                                  InstallPort
+   150 0000009E E8(0000)                	call	libInstallPort
+   151 000000A1 C3                      	ret
+   152                                  	
+   153                                  
+   154                                  ; RemovePort
+   155                                  ; No Input/Outputs
+   156                                  ; Restores old handler for the appropriate serial port IRQ
+   157                                  RemovePort       
+   158 000000A2 E8(0000)                	call	libRemovePort
+   159 000000A5 C3                      	ret
+   160                                  
+   161                                  
+   162                                  ; PortISR
+   163                                  ; services serial port interrupts
+   164                                  ; No inputs/Outputs
+   165                                  PortISR
+   166 000000A6 E9(0000)                	jmp	libPortISR
+   167                                  
+   168                                  
+   169                                  	
+   170                                  ; InstallKeyboard
+   171                                  ; Installs new vector to KeyboardISR, saving old vector
+   172                                  ; No inputs/Outputs
+   173                                  InstallKeyboard
+   174 000000A9 E8(0000)                	call	libInstallKeyboard
+   175 000000AC C3                      	ret
+   176                                  
+   177                                  
+   178                                  ; RemoveKeyboard
+   179                                  ; restores original keyboard vector
+   180                                  ; No inputs/Outputs
+   181                                  RemoveKeyboard
+   182 000000AD E8(0000)                	call	libRemoveKeyboard
+   183 000000B0 C3                      	ret
+   184                                  
+   185                                  
+   186                                  ; KeyboardISR
+   187                                  ; handles esc=>[quit], shift keys=>call DrawKeyNames, regular key => [nextKey]
+   188                                  ; No inputs/Outputs
+   189                                  KeyboardISR
+   190 000000B1 E9(0000)                	jmp	libKeyboardISR
+   191                                  
+   192                                  
+   193                                  ; GetNextKey
+   194                                  ; output: al = next key, unless esc was pressed
+   195                                  ;	  dx = TOP_OFF if user typed, else = BOTTOM_OFF
+   196                                  GetNextKey 
+   197 000000B4 E8(0000)                	call	libGetNextKey
+   198 000000B7 C3                      	ret
+   199                                  
+   200                                  
+   201                                  
+   202                                  ;TransmitKey
+   203                                  ;Transmits the byte in al to the appropriate serial port
+   204                                  ;Inputs		al=byte to transmit
+   205                                  ;Outputs	none
+   206                                  TransmitKey
+   207 000000B8 E8(0000)                	call	libTransmitKey
+   208 000000BB C3                      	ret
+   209                                  	
+   210                                  
+   211                                  ;DrawNewLine
+   212                                  ;Inputs:	
+   213                                  ;		di=location of char below which to draw new line
+   214                                  ;		dx=offset of the correct box(top or bottom)
+   215                                  ;Outputs:	al=row#, ah=col#, di=offset of next char
+   216                                  
+   217                                  DrawNewLine
+   218 000000BC E8(0000)                	call	libDrawNewLine
+   219 000000BF C3                      	ret
+   220                                  
+   221                                  
+   222                                  ;Inputs:	
+   223                                  ;		di=location of char from which to bksp
+   224                                  ;		dx=offset of the correct box(top or bottom)
+   225                                  ;Outputs:	di=offset of next char
+   226                                  ;		cursor to the right spot
+   227                                  DrawBackspace
+   228 000000C0 E8(0000)                	call	libDrawBackspace
+   229 000000C3 C3                      	ret
+   230                                  
+   231                                  
+   232                                  ;	
+   233                                  ; inputs:	al = asciikey that the user just typed
+   234                                  ;		di = current location on top box
+   235                                  ;		si = current location on bottom box
+   236                                  ;		dx = upper left corner of the current box
+   237                                  ; output:	di = next char's location
+   238                                  ;		si = next char's location
+   239                                  
+   240                                  TypeKey
+   241 000000C4 E8(0000)                	call	libTypeKey
+   242 000000C7 C3                      	ret
+   243                                  
+   244                                  
+   245                                  	
+   246                                  
+   247                                  
+   248                                  ;====== SECTION 8: Stuff we would have preferred to use %include for ======
+   249                                  
+   250                                  
+   251                                  LSHIFT	equ	6
+   252                                  RSHIFT	equ	7
+   253                                  BKSP	equ	8
+   254                                  ENTR	equ	13
+   255                                  ESC	equ	27
+   256                                  DEL	equ	10
+   257                                  HOME	equ	11
+   258                                  UP	equ	24
+   259                                  PGUP	equ	12
+   260                                  LEFT	equ	27
+   261                                  RIGHT	equ	26
+   262                                  END	equ	14
+   263                                  DOWN	equ	25
+   264                                  PGDN	equ	15
+   265                                  INS	equ	16
+   266                                  SPACE	equ	17
+   267                                  
+   268                                  QwertyNames
+   269 000000C8 00                      	db	0	; filler
+   270 000000C9 1B3132333435363738-     	db	ESC,'1','2','3','4','5','6','7','8','9','0','-','=',BKSP
+   271 000000D2 39302D3D08         
+   272 000000D7 007177657274797569-     	db	0, 'q','w','e','r','t','y','u','i','o','p','[',']',ENTR
+   273 000000E0 6F705B5D0D         
+   274 000000E5 006173646667686A6B-     	db	0,'a','s','d','f','g','h','j','k','l',';',"'","`"
+   275 000000EE 6C3B2760           
+   276 000000F2 065C7A786376626E6D-     	db	LSHIFT,'\','z','x','c','v','b','n','m',",",'.','/',RSHIFT,'*'
+   277 000000FB 2C2E2F072A         
+   278 00000100 002000C8C9CACBCCCD-     	db	0, ' ', 0, 200,201,202,203,204,205,206,207,208,209 ; F1-F10
+   279 00000109 CECFD0D1           
+   280 0000010D 0000                    	db	0,0	; numlock, scroll lock
+   281 0000010F 0B180C2D                	db	HOME, UP, PGUP, '-'
+   282 00000113 1B001A2B                	db	LEFT, 0, RIGHT, '+'
+   283 00000117 0E190F10                	db	END, DOWN, PGDN, INS
+   284 0000011B 0A00                    	db	DEL, 0; sysrq
+   285                                  
+   286                                  QwertyShift
+   287 0000011D 00                      	db	0	; filler
+   288 0000011E 1B21402324255E262A-     	db	ESC,'!','@','#','$','%','^','&','*','(',')','_','+',BKSP
+   289 00000127 28295F2B08         
+   290 0000012C 005157455254595549-     	db	0, 'Q','W','E','R','T','Y','U','I','O','P','{','}',ENTR
+   291 00000135 4F507B7D0D         
+   292 0000013A 004153444647484A4B-     	db	0,'A','S','D','F','G','H','J','K','L',':','"','~'
+   293 00000143 4C3A227E           
+   294 00000147 067C5A584356424E4D-     	db	LSHIFT,'|','Z','X','C','V','B','N','M',"<",'>','?',RSHIFT,'*'
+   295 00000150 3C3E3F072A         
+   296 00000155 002000C8C9CACBCCCD-     	db	0, ' ', 0, 200, 201,202,203,204,205,206,207,208,209 ; F1-F10
+   297 0000015E CECFD0D1           
+   298 00000162 0000                    	db	0,0	; numlock, scroll lock
+   299 00000164 0B180C2D                	db	HOME, UP, PGUP, '-'
+   300 00000168 1B001A2B                	db	LEFT, 0, RIGHT, '+'
+   301 0000016C 0E190F10                	db	END, DOWN, PGDN, INS
+   302 00000170 0A00                    	db	DEL, 0; sysrq
+   303                                  
+   304                                  
