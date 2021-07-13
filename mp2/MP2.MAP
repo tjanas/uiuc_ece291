@@ -1,0 +1,9 @@
+
+ Start  Stop   Length Name               Class
+
+ 00000H 001FFH 00200H stkseg             
+ 00200H 009B6H 007B7H code               
+
+Error: Undefined symbol mp2xit in module mp2.asm
+Program entry point at 0020:0287
+

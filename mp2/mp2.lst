@@ -1,0 +1,1072 @@
+     1                                  ; MP2 - Terrence B. Janas - September 23, 2001
+     2                                  ;
+     3                                  ;
+     4                                  ; Josh Potts, Fall 2001
+     5                                  ; Guest Authors: Michael Urman, Justin Quek
+     6                                  ; University of Illinois, Urbana-Champaign
+     7                                  ; Dept. of Electrical and Computer Engineering
+     8                                  ;
+     9                                  ; Version 1.0
+    10                                  
+    11                                  	BITS	16
+    12                                  
+    13                                  ;====== SECTION 1: Define constants =======================================
+    14                                  
+    15                                  	BS	    EQU 8
+    16                                          CR          EQU 0Dh
+    17                                          LF          EQU 0Ah
+    18                                          BEL         EQU 07h
+    19                                  	TBUF_SIZE   EQU 79
+    20                                  
+    21                                  ;====== SECTION 2: Declare external procedures ============================
+    22                                  
+    23                                  ; These are functions from lib291
+    24                                  EXTERN kbdin, dspout, dspmsg, ascbin, binasc, mp2xit
+    25                                  
+    26                                  ; You will be writing your own versions of these functions
+    27                                  EXTERN _libDoCommand, _libReadLine, _libGetLetter, _libGetNumber
+    28                                  EXTERN _libCalculateInterest, _libConvertCurrency
+    29                                  EXTERN _libFDRead, _libFDWrite, _libFDAdd, _libFDMul, _libFDPow
+    30                                  
+    31                                  ; The _lib functions need these to work properly
+    32                                  GLOBAL _DoCommand, _ReadLine, _GetLetter, _GetNumber
+    33                                  GLOBAL _CalculateInterest, _ConvertCurrency
+    34                                  GLOBAL _FDRead, _FDWrite, _FDAdd, _FDMul, _FDPow
+    35                                  GLOBAL tbuf, pbuf, binascbuf
+    36                                  GLOBAL principle, interest, periods, result
+    37                                  GLOBAL numbuf1, numbuf2
+    38                                  GLOBAL msg_help, msg_error, msg_result, msg_crlf
+    39                                  GLOBAL tab_from, tab_to
+    40                                  
+    41                                  ;====== SECTION 3: Define stack segment ===================================
+    42                                  
+    43                                  SEGMENT stkseg STACK                    ; *** STACK SEGMENT ***
+    44 00000000 <res 00000200>                  resb      64*8
+    45                                  stacktop:
+    46                                  	resb 0
+    47                                  
+    48                                  ;====== SECTION 4: Define code segment ====================================
+    49                                  
+    50                                  SEGMENT code                            ; *** CODE SEGMENT ***
+    51                                  
+    52                                  ;====== SECTION 5: Declare variables for main procedure ===================
+    53 00000000 <res 0000004F>          tbuf		resb TBUF_SIZE
+    54 0000004F <res 0000000A>          pbuf            resb 10
+    55 00000059 <res 00000007>          binascbuf	resb 7
+    56 00000060 <res 00000004>          principle	resd 1
+    57 00000064 <res 00000004>          interest	resd 1
+    58 00000068 <res 00000004>          periods		resd 1
+    59 0000006C <res 00000004>          result		resd 1
+    60 00000070 <res 00000004>          numbuf1		resd 1
+    61 00000074 <res 00000004>          numbuf2		resd 1
+    62                                  
+    63 00000078 0D0A506572666F726D-     msg_help	db CR, LF, 'Perform an Interest calculation by entering'
+    64 00000081 20616E20496E746572-
+    65 0000008A 6573742063616C6375-
+    66 00000093 6C6174696F6E206279-
+    67 0000009C 20656E746572696E67 
+    68 000000A5 0D0A202069203C7072-     		db CR, LF, '  i <principle> <interest rate> <periods>'
+    69 000000AE 696E6369706C653E20-
+    70 000000B7 3C696E746572657374-
+    71 000000C0 20726174653E203C70-
+    72 000000C9 6572696F64733E     
+    73 000000D0 0D0A                    		db CR, LF
+    74 000000D2 0D0A506572666F726D-     		db CR, LF, 'Perform a currency conversion by entering'
+    75 000000DB 20612063757272656E-
+    76 000000E4 637920636F6E766572-
+    77 000000ED 73696F6E2062792065-
+    78 000000F6 6E746572696E67     
+    79 000000FD 0D0A202063203C6672-     		db CR, LF, '  c <from> <to> <principle>'
+    80 00000106 6F6D3E203C746F3E20-
+    81 0000010F 3C7072696E6369706C-
+    82 00000118 653E               
+    83 0000011A 0D0A20776865726520-     		db CR, LF, ' where <from> and <to> are one of the letters:'
+    84 00000123 3C66726F6D3E20616E-
+    85 0000012C 64203C746F3E206172-
+    86 00000135 65206F6E65206F6620-
+    87 0000013E 746865206C65747465-
+    88 00000147 72733A             
+    89 0000014A 0D0A20206320642065-     		db CR, LF, '  c d e f g k l* m p q r s w* y z'
+    90 00000153 20662067206B206C2A-
+    91 0000015C 206D20702071207220-
+    92 00000165 7320772A2079207A   
+    93 0000016D 0D0A204C6574746572-     		db CR, LF, ' Letters with a star can only be <to>.'
+    94 00000176 732077697468206120-
+    95 0000017F 737461722063616E20-
+    96 00000188 6F6E6C79206265203C-
+    97 00000191 746F3E2E           
+    98 00000195 0D0A24                  		db CR, LF, '$'
+    99                                  
+   100 00000198 0D0A202A2A20455252-     msg_error	db CR, LF, ' ** ERROR **', CR, LF, '$'
+   101 000001A1 4F52202A2A0D0A24   
+   102 000001A9 0D0A20546865207265-     msg_result	db CR, LF, ' The result is: ', '$'
+   103 000001B2 73756C742069733A20-
+   104 000001BB 24                 
+   105 000001BC 0D0A24                  msg_crlf	db CR, LF, '$'
+   106                                  
+   107                                  ; c = canada dollar
+   108                                  ; d = us dollar
+   109                                  ; e = euros
+   110                                  ; f = france francs
+   111                                  ; g = germany deutchmarks
+   112                                  ; k = czech republic koruny
+   113                                  ; l = italy lira
+   114                                  ; m = mexico peso
+   115                                  ; p = great britain pounds
+   116                                  ; r = russia rubles
+   117                                  ; s = israel new shekel
+   118                                  ; w = south korea won
+   119                                  ; y = japan yen
+   120                                  
+   121 000001BF 00000000                tab_from	dw 0, 0			; a, b
+   122 000001C3 [2702]                  		dw from_canadian	; c
+   123 000001C5 [2B02]                  		dw from_dollar		; d
+   124 000001C7 [2F02]                  		dw from_euros		; e
+   125 000001C9 [3302]                  		dw from_francs		; f
+   126 000001CB [3702]                  		dw from_deutsche	; g
+   127 000001CD 000000000000            		dw 0, 0, 0		; h, i, j
+   128 000001D3 [3B02]                  		dw from_koruny		; k
+   129 000001D5 0000                    		dw 0			; l
+   130 000001D7 [3F02]                  		dw from_peso		; m 
+   131 000001D9 00000000                		dw 0, 0			; n, o
+   132 000001DD [4302]                  		dw from_pound		; p
+   133 000001DF 0000                    		dw 0			; q
+   134 000001E1 [4702]                  		dw from_ruble		; r
+   135 000001E3 [4B02]                  		dw from_shekel		; s
+   136 000001E5 000000000000000000-     		dw 0, 0, 0, 0, 0	; t, u, v, w, x
+   137 000001EE 00                 
+   138 000001EF [4F02]                  		dw from_yen		; y
+   139 000001F1 0000                    		dw 0			; z
+   140                                  		
+   141 000001F3 00000000                tab_to		dw 0, 0			; a, b
+   142 000001F7 [5302]                  		dw to_canadian		; c
+   143 000001F9 [5702]                  		dw to_dollar		; d
+   144 000001FB [5B02]                  		dw to_euros		; e
+   145 000001FD [5F02]                  		dw to_francs		; f
+   146 000001FF [6302]                  		dw to_deutsche		; g
+   147 00000201 000000000000            		dw 0, 0, 0		; h, i, j
+   148 00000207 [6702]                  		dw to_koruny		; k
+   149 00000209 [6B02]                  		dw to_lira		; l
+   150 0000020B [6F02]                  		dw to_peso		; m 
+   151 0000020D 00000000                		dw 0, 0			; n, o
+   152 00000211 [7302]                  		dw to_pound		; p
+   153 00000213 0000                    		dw 0			; q
+   154 00000215 [7702]                  		dw to_ruble		; r
+   155 00000217 [7B02]                  		dw to_shekel		; s
+   156 00000219 000000000000            		dw 0, 0, 0		; t, u, v
+   157 0000021F [7F02]                  		dw to_won		; w
+   158 00000221 0000                    		dw 0			; x
+   159 00000223 [8302]                  		dw to_yen		; y
+   160 00000225 0000                    		dw 0			; z
+   161                                  
+   162 00000227 00004000                from_canadian	dw	0, 64
+   163 0000022B 01000000                from_dollar	dw	1, 0
+   164 0000022F 00005B00                from_euros	dw	0, 91
+   165 00000233 00000E00                from_francs	dw	0, 14
+   166 00000237 00002E00                from_deutsche	dw	0, 46
+   167 0000023B 00000300                from_koruny	dw	0, 03
+   168 0000023F 00000B00                from_peso	dw	0, 11
+   169 00000243 01002E00                from_pound	dw	1, 46
+   170 00000247 00000300                from_ruble	dw	0, 03
+   171 0000024B 00001700                from_shekel	dw	0, 23
+   172 0000024F 00000100                from_yen	dw	0, 01
+   173                                  
+   174 00000253 01003800                to_canadian	dw	1, 56
+   175 00000257 01000000                to_dollar	dw	1, 0
+   176 0000025B 01000A00                to_euros	dw	1, 10
+   177 0000025F 07001700                to_francs	dw	7, 23
+   178 00000263 02001000                to_deutsche	dw	2, 16
+   179 00000267 25003D00                to_koruny	dw	37, 61
+   180 0000026B 55085700                to_lira		dw	2133, 87
+   181 0000026F 09001D00                to_peso		dw	9, 29
+   182 00000273 00004400                to_pound	dw	0, 68
+   183 00000277 1D000200                to_ruble	dw	29, 2
+   184 0000027B 04001D00                to_shekel	dw	4, 29
+   185 0000027F 01050000                to_won		dw	1281, 0
+   186 00000283 78000000                to_yen		dw	120, 0
+   187                                  
+   188                                  
+   189                                  ;====== SECTION 6: Program initialization =================================
+   190                                  
+   191                                  ..start:
+   192 00000287 8CC8                            mov     ax, cs                  ; Initialize Default Segment register
+   193 00000289 8ED8                            mov     ds, ax  
+   194 0000028B B8[0000]                        mov     ax, stkseg              ; Initialize Stack Segment register
+   195 0000028E 8ED0                            mov     ss, ax
+   196 00000290 BC[0002]                        mov     sp, stacktop            ; Initialize Stack Pointer register
+   197                                  
+   198                                  ;====== SECTION 7: Main procedure =========================================
+   199                                  
+   200                                  MAIN:
+   201 00000293 E80700                  	call	_DoCommand
+   202 00000296 85C0                    	test	ax, ax
+   203 00000298 75F9                    	jnz	MAIN
+   204                                  	
+   205 0000029A E8(0000)                	call	mp2xit
+   206                                  
+   207                                  
+   208                                  
+   209                                  ;--------------------------------------------------------------------------
+   210                                  ; DoCommand								  ;
+   211                                  ;   Inputs: none							  ;
+   212                                  ;									  ;
+   213                                  ;   Outputs: ax = 1 to continue or 0 to quit				  ;
+   214                                  ;									  ;
+   215                                  ;   Calls: dspmsg, ReadLine, GetLetter, GetNumber, CalculateInterest,	  ;
+   216                                  ;          ConvertCurrency, FDWrite					  ;
+   217                                  ;									  ;
+   218                                  ;   Purpose: gets and processes a command, reporting the result		  ;
+   219                                  ;--------------------------------------------------------------------------
+   220                                  _DoCommand
+   221                                  					; call	_libDoCommand
+   222                                  					; ret
+   223                                  
+   224 0000029D 53                       push bx				; Save register values
+   225 0000029E 51                       push cx
+   226 0000029F 52                       push dx
+   227 000002A0 56                       push si
+   228 000002A1 57                       push di
+   229                                  
+   230                                   ;------
+   231                                   .Start:
+   232                                   ;------
+   233 000002A2 B84F00                  	mov ax, TBUF_SIZE		; Setup typing buffer
+   234 000002A5 BB[0000]                	mov bx, tbuf
+   235 000002A8 E8A300                  	call _ReadLine			; Keep reading line until characters
+   236 000002AB 85C0                    	test ax, ax			; are inputted
+   237 000002AD 74F3                    	jz .Start
+   238                                  
+   239 000002AF E83F01                  	call _GetLetter			; Quit program if 'q' is pressed
+   240 000002B2 3C71                    	cmp al, 'q'			; Convert currency if 'c' is pressed
+   241 000002B4 741B                    	je .End				; Calculate interest if 'i' is pressed
+   242                                  
+   243 000002B6 3C63                    	cmp al, 'c'
+   244 000002B8 741F                    	je .ConvertCurrency
+   245                                  
+   246 000002BA 3C69                    	cmp al, 'i'
+   247 000002BC 7468                    	je .CalculateInterest
+   248                                  
+   249 000002BE 3C61                    	cmp al, 'a'			; Display help message if other
+   250 000002C0 7C59                    	jl .Error			; letters are pressed, and display
+   251 000002C2 3C7A                    	cmp al, 'z'			; error message for non-letters
+   252 000002C4 7F55                    	jg .Error
+   253                                  
+   254 000002C6 BA[7800]                	mov dx, msg_help
+   255 000002C9 E8(0000)                	call dspmsg
+   256 000002CC B001                    	mov al, 1
+   257 000002CE E90200                  	jmp .Exit
+   258                                  
+   259                                   ;----
+   260                                   .End:
+   261                                   ;----
+   262 000002D1 31C0                    	xor ax, ax			; To exit the program, ax must equal 0
+   263                                  
+   264                                   ;----
+   265                                   .Exit:
+   266                                   ;----
+   267 000002D3 5F                      	pop di				; Restore original register values
+   268 000002D4 5E                      	pop si
+   269 000002D5 5A                      	pop dx
+   270 000002D6 59                      	pop cx
+   271 000002D7 5B                      	pop bx
+   272 000002D8 C3                      	ret
+   273                                  
+   274                                   ;----------------
+   275                                   .ConvertCurrency:
+   276                                   ;----------------
+   277 000002D9 E81501                  	call _GetLetter			; Grab "convert from" type
+   278 000002DC 85C0                    	test ax, ax
+   279 000002DE 743B                    	jz .Error
+   280 000002E0 88C6                    	mov dh, al
+   281                                  
+   282 000002E2 E80C01                  	call _GetLetter			; Grab "convert to" type
+   283 000002E5 85C0                    	test ax, ax
+   284 000002E7 7432                    	jz .Error
+   285 000002E9 88C2                    	mov dl, al
+   286                                  
+   287 000002EB BF[6000]                	mov di, principle		; Grab amount you wish to convert
+   288 000002EE E81A01                  	call _GetNumber
+   289 000002F1 85C0                    	test ax, ax
+   290 000002F3 7426                    	jz .Error
+   291                                  
+   292 000002F5 E84E01                  	call _ConvertCurrency		; and store the converted value
+   293 000002F8 85C0                    	test ax, ax			; in [result]
+   294 000002FA 741F                    	jz .Error
+   295                                  
+   296                                   ;------------
+   297                                   .PrintAmount:
+   298                                   ;------------
+   299 000002FC BA[A901]                	mov dx, msg_result		; Print a text string and the
+   300 000002FF E8(0000)                	call dspmsg			; FDNumber that is stored in result
+   301 00000302 BB[4F00]                	mov bx, pbuf
+   302 00000305 BE[6C00]                	mov si, result
+   303 00000308 E8F601                  	call _FDWrite
+   304 0000030B 89DA                    	mov dx, bx
+   305 0000030D E8(0000)                	call dspmsg
+   306 00000310 BA[BC01]                	mov dx, msg_crlf
+   307 00000313 E8(0000)                	call dspmsg
+   308 00000316 B001                    	mov al, 1
+   309 00000318 E9B8FF                  	jmp .Exit
+   310                                  
+   311                                   ;------
+   312                                   .Error:
+   313                                   ;------
+   314 0000031B BA[9801]                	mov dx, msg_error		; Print error message if ax indicated
+   315 0000031E E8(0000)                	call dspmsg			; an error occured. Set ax to nonzero
+   316 00000321 B001                    	mov al, 1			; value to indicate not to quit
+   317 00000323 E9ADFF                  	jmp .Exit
+   318                                  
+   319                                   ;------------------
+   320                                   .CalculateInterest:
+   321                                   ;------------------
+   322 00000326 BF[6000]                	mov di, principle		; Grab the principle
+   323 00000329 E8DF00                  	call _GetNumber
+   324 0000032C 85C0                    	test ax, ax
+   325 0000032E 74EB                    	jz .Error
+   326                                  
+   327 00000330 BF[6400]                	mov di, interest		; Grab the interest
+   328 00000333 E8D500                  	call _GetNumber
+   329 00000336 85C0                    	test ax, ax
+   330 00000338 74E1                    	jz .Error
+   331                                  
+   332 0000033A BF[6800]                	mov di, periods			; Grab the periods
+   333 0000033D E8CB00                  	call _GetNumber
+   334 00000340 85C0                    	test ax, ax
+   335 00000342 74D7                    	jz .Error
+   336                                  
+   337 00000344 E8D500                  	call _CalculateInterest		; and store the result of compound
+   338 00000347 85C0                    	test ax, ax			; interest in [result]
+   339 00000349 74D0                    	jz .Error
+   340 0000034B E9AEFF                  	jmp .PrintAmount
+   341                                  
+   342                                  
+   343                                  
+   344                                  ;--------------------------------------------------------------------------
+   345                                  ; ReadLine								  ;
+   346                                  ;   Inputs: ax = size of the buffer					  ;
+   347                                  ;           bx = offset of the buffer					  ;
+   348                                  ;									  ;
+   349                                  ;   Outputs: ax = number of characters in the buffer (excluding '$')	  ;
+   350                                  ;            buffer at bx holds the typed characters			  ;
+   351                                  ;									  ;
+   352                                  ;   Calls: dspout, kbdin, dspmsg					  ;
+   353                                  ;									  ;
+   354                                  ;   Purpose: take keyboard entry from the user, handling backspace	  ;
+   355                                  ;            and bounds							  ;
+   356                                  ;--------------------------------------------------------------------------
+   357                                  _ReadLine
+   358                                  			;call	_libReadLine
+   359                                  			;ret
+   360 0000034E 51                       push cx
+   361 0000034F 52                       push dx
+   362 00000350 56                       push si
+   363                                  
+   364 00000351 31D2                     xor dx, dx		; Let dx = number of characters... Initially = 0
+   365 00000353 89C1                     mov cx, ax		; Let cx = buffer size
+   366 00000355 49                       dec cx			; Decrement cx to allow space for '$' at the end
+   367                                  
+   368 00000356 52                       push dx
+   369 00000357 B03E                     mov al, '>'
+   370 00000359 88C2                     mov dl, al		; Print a > to screen but do not display in buffer
+   371 0000035B E8(0000)                 call dspout
+   372 0000035E 5A                       pop dx
+   373                                  
+   374 0000035F B020                     mov al, ' '
+   375 00000361 4A                       dec word dx		; The Display sub-routine automatically increments dx
+   376                                  			; Since this ' ' should not count as a character in
+   377 00000362 E97700                   jmp .Display		; the buffer, decrement dx ahead of time
+   378                                  
+   379                                   ;------
+   380                                   .Start:
+   381                                   ;------
+   382 00000365 39CA                    	cmp dx, cx		; Check if buffer is full (overflow)
+   383 00000367 743C                    	je .Overflow
+   384                                  	
+   385 00000369 E8(0000)                	call kbdin
+   386 0000036C 3C20                    	cmp al, ' '
+   387 0000036E 7513                    	jne .BackSpace
+   388 00000370 89D6                    	mov word si, dx
+   389 00000372 8800                    	mov byte [bx + si], al	; Write a space at location of cursor
+   390 00000374 E96500                  	jmp .Display
+   391                                  
+   392                                   ;------
+   393                                   .Enter:
+   394                                   ;------
+   395 00000377 3C0D                    	cmp al, 13			; If ENTER is pressed, put '$'
+   396 00000379 754D                    	jne .NumberCheck		; in the buffer and exit
+   397 0000037B 89D6                    	mov word si, dx
+   398 0000037D C60024                  	mov byte [bx + si], '$'
+   399 00000380 E96800                  	jmp .Exit
+   400                                  
+   401                                   ;----------
+   402                                   .BackSpace:
+   403                                   ;----------
+   404 00000383 3C08                    	cmp al, 8		; To delete a character on the screen,
+   405 00000385 75F0                    	jne .Enter		; display a BACKSPACE, a SPACE, and
+   406 00000387 85D2                    	test dx, dx		; another BACKSPACE to move back.
+   407 00000389 7433                    	jz .Underflow		; Check if user presses BACKSPACE at beginning
+   408                                  				; of the buffer.
+   409 0000038B 52                      	push dx
+   410 0000038C 88C2                    	mov dl, al
+   411 0000038E E8(0000)                	call dspout
+   412                                  	
+   413 00000391 B220                    	mov dl, ' '
+   414 00000393 E8(0000)                	call dspout
+   415                                  
+   416 00000396 88C2                    	mov dl, al
+   417 00000398 E8(0000)                	call dspout
+   418 0000039B 5A                      	pop dx
+   419                                  	
+   420 0000039C 4A                      	dec word dx			; Decrement buffer, since we
+   421 0000039D 89D6                    	mov word si, dx			; deleted a character
+   422 0000039F C60020                  	mov byte [bx + si], ' '
+   423 000003A2 E9C0FF                  	jmp .Start
+   424                                  
+   425                                   ;---------
+   426                                   .Overflow:
+   427                                   ;---------
+   428 000003A5 52                      	push dx
+   429 000003A6 B207                    	mov dl, 7		; When the user presses a normal key and
+   430 000003A8 E8(0000)                	call dspout		; the buffer is full, ReadLine must BEEP
+   431 000003AB 5A                      	pop dx			; and not modify the buffer's contents
+   432                                  
+   433 000003AC E8(0000)                	call kbdin
+   434 000003AF 3C08                    	cmp al, 8		; Check if user pressed BACKSPACE
+   435 000003B1 74D0                    	je .BackSpace
+   436                                  
+   437 000003B3 3C0D                    	cmp al, 13		; When the user presses ENTER, must
+   438 000003B5 75EE                    	jne .Overflow		; place $ at the spot where CR would go
+   439                                  
+   440 000003B7 C6470124                	mov byte [bx+1], '$'	; and return with appropriate outputs
+   441 000003BB E92D00                  	jmp .Exit
+   442                                  
+   443                                   ;----------
+   444                                   .Underflow:
+   445                                   ;----------
+   446 000003BE 52                      	push dx				; If user tries to BACKSPACE at
+   447 000003BF B207                    	mov dl, 7			; beginning of buffer, then BEEP
+   448 000003C1 E8(0000)                	call dspout
+   449 000003C4 5A                      	pop dx
+   450 000003C5 E99DFF                  	jmp .Start
+   451                                  
+   452                                   ;------------
+   453                                   .NumberCheck:
+   454                                   ;------------
+   455 000003C8 3C2E                    	cmp al, '.'		; Check if input is a valid character
+   456 000003CA 7410                    	je .Display		; to print to the screen. Valid input
+   457 000003CC 3C30                    	cmp al, '0'		; characters are the characters 0-9,
+   458 000003CE 7C04                    	jl .CharacterCheck	; a-z, and '.'
+   459 000003D0 3C39                    	cmp al, '9'
+   460 000003D2 7E08                    	jle .Display
+   461                                  
+   462                                   ;---------------
+   463                                   .CharacterCheck:
+   464                                   ;---------------
+   465 000003D4 3C61                    	cmp al, 'a'
+   466 000003D6 7C8D                    	jl .Start
+   467 000003D8 3C7A                    	cmp al, 'z'
+   468 000003DA 7F89                    	jg .Start
+   469                                  	
+   470                                   ;--------
+   471                                   .Display:
+   472                                   ;--------
+   473 000003DC 89D6                    	mov word si, dx
+   474 000003DE 8800                    	mov byte [bx + si], al		; Print to the screen
+   475 000003E0 42                      	inc dx
+   476 000003E1 52                      	push dx
+   477 000003E2 88C2                    	mov dl, al
+   478 000003E4 E8(0000)                	call dspout
+   479 000003E7 5A                      	pop dx
+   480 000003E8 E97AFF                  	jmp .Start
+   481                                  
+   482                                   ;-----
+   483                                   .Exit:
+   484                                   ;-----
+   485 000003EB 89D0                    	mov ax, dx
+   486 000003ED 5E                      	pop si
+   487 000003EE 5A                      	pop dx
+   488 000003EF 59                      	pop cx
+   489 000003F0 C3                      	ret
+   490                                  
+   491                                  
+   492                                  
+   493                                  ;--------------------------------------------------------------------------
+   494                                  ; GetLetter								  ;
+   495                                  ;   Inputs: bx = offset of the buffer from which to read		  ;
+   496                                  ;									  ;
+   497                                  ;   Outputs: al = ASCII value of first letter (ignoring spaces),	  ;
+   498                                  ;                 or ax = 0 if it's not a letter			  ;
+   499                                  ;            bx = offset of the character following the letter returned,  ;
+   500                                  ;                 undefined on error					  ;
+   501                                  ;									  ;
+   502                                  ;   Purpose: retrieve a letter from the input string; error if one isn't  ;
+   503                                  ;            available							  ;
+   504                                  ;--------------------------------------------------------------------------
+   505                                  _GetLetter
+   506                                  				; call	_libGetLetter
+   507                                  				; ret
+   508                                   resb 0
+   509                                   
+   510                                   ;----------
+   511                                   .CheckChar:
+   512                                   ;----------
+   513 000003F1 803F20                  	cmp byte [bx], ' '	; Ignore spaces when reading character
+   514 000003F4 7411                    	je .SpaceChar
+   515                                  
+   516 000003F6 803F61                  	cmp byte [bx], 'a'	; Check to see if ASCII value is a
+   517 000003F9 7C09                    	jl .Error		; valid character, between 'a' and 'z'
+   518 000003FB 803F7A                  	cmp byte [bx], 'z'
+   519 000003FE 7F04                    	jg .Error
+   520 00000400 8A07                    	mov al, byte [bx]
+   521 00000402 43                      	inc bx			; Return the offset of the character
+   522 00000403 C3                      	ret			; following the letter returned
+   523                                   ;------
+   524                                   .Error:
+   525                                   ;------
+   526 00000404 31C0                    	xor ax, ax
+   527 00000406 C3                      	ret
+   528                                  
+   529                                   ;----------
+   530                                   .SpaceChar:
+   531                                   ;----------
+   532 00000407 43                      	inc bx			; bx points to the next character
+   533 00000408 E9E6FF                  	jmp .CheckChar		; to check again for spaces
+   534                                  
+   535                                  
+   536                                  
+   537                                  ;--------------------------------------------------------------------------
+   538                                  ; GetNumber								  ;
+   539                                  ;   Inputs: bx = offset of the buffer from which to read		  ;
+   540                                  ;           di = offset of the FDNumber in which to store the read number ;
+   541                                  ;									  ;
+   542                                  ;   Outputs: ax = 0 on error or non-zero on success			  ;
+   543                                  ;            bx = offset of the character following the number returned,  ;
+   544                                  ;                 undefined on error					  ;
+   545                                  ;            [di] = the number read from the string			  ;
+   546                                  ;									  ;
+   547                                  ;   Calls: FDRead							  ;
+   548                                  ;									  ;
+   549                                  ;   Purpose: retrieve a FDNumber from the input string;			  ;
+   550                                  ;            error if one isn't available				  ;
+   551                                  ;--------------------------------------------------------------------------
+   552                                  _GetNumber
+   553                                  			; call	_libGetNumber
+   554                                  			; ret
+   555 0000040B 52                       push dx
+   556 0000040C E89D00                   call _FDRead		; FDRead takes care of the inputs and the
+   557 0000040F 84D2                     test dl, dl		; output of bx and [di]
+   558 00000411 7505                     jnz .Error		; DL = 0 if no conversion errors
+   559                                  
+   560 00000413 B001                     mov al, 1
+   561 00000415 E90200                   jmp .End
+   562                                  
+   563                                   ;------
+   564                                   .Error:
+   565                                   ;------
+   566 00000418 31C0                    	xor ax, ax
+   567                                  
+   568                                   ;----
+   569                                   .End:
+   570                                   ;----
+   571 0000041A 5A                      	pop dx
+   572 0000041B C3                      	ret
+   573                                  
+   574                                  
+   575                                  
+   576                                  ;--------------------------------------------------------------------------
+   577                                  ; CalculateInterest							  ;
+   578                                  ;   Inputs: [principle] = the principle for the calculation		  ;
+   579                                  ;           [interest] = the interest rate per period			  ;
+   580                                  ;           [periods] = the number of periods to compound		  ;
+   581                                  ;									  ;
+   582                                  ;   Outputs: ax = 0 on error or non-zero on success			  ;
+   583                                  ;									  ;
+   584                                  ;   Calls: FDMul, FDPow							  ;
+   585                                  ;									  ;
+   586                                  ;   Purpose: calculate the compound interest, storing to [result]	  ;
+   587                                  ;--------------------------------------------------------------------------
+   588                                  _CalculateInterest
+   589                                  				;call	_libCalculateInterest
+   590                                  				;ret
+   591                                  
+   592 0000041C 56                       push si
+   593 0000041D 57                       push di
+   594 0000041E 52                       push dx
+   595                                   
+   596 0000041F FF06[6400]               inc word [interest]		; Calculate (1+[interest])^[periods]
+   597 00000423 BE[6800]                 mov si, periods
+   598 00000426 BF[6400]                 mov di, interest		; dx = integer portion of result
+   599 00000429 E8C201                   call _FDPow			; ax = decimal portion of result
+   600                                  
+   601 0000042C FF0E[6400]               dec word [interest]		; Restore [interest] to its original value
+   602 00000430 8916[6C00]               mov word [result], dx
+   603 00000434 A3[6E00]                 mov word [result+2], ax
+   604                                  
+   605 00000437 BE[6000]                 mov si, principle		; [principle]*((1+[interest])^[periods])
+   606 0000043A BF[6C00]                 mov di, result
+   607 0000043D E82F01                   call _FDMul			; Subroutine should always succeed, so
+   608 00000440 B001                     mov al, 1			; ax should always be non-zero on exit
+   609                                  
+   610 00000442 5A                       pop dx
+   611 00000443 5F                       pop di
+   612 00000444 5E                       pop si
+   613 00000445 C3                       ret
+   614                                  
+   615                                  
+   616                                  
+   617                                  ;--------------------------------------------------------------------------
+   618                                  ; ConvertCurrency							  ;
+   619                                  ;   Inputs: [principle] = the principle for the calculation, a FDNumber	  ;
+   620                                  ;           dh = the letter for the currency from which to convert	  ;
+   621                                  ;           dl = the letter for the currency to which to convert	  ;
+   622                                  ;									  ;
+   623                                  ;   Outputs: ax = 0 on error or non-zero on success			  ;
+   624                                  ;            [result] = the result of the calculation (principle*from*to) ;
+   625                                  ;									  ;
+   626                                  ;   Calls: FDMul							  ;
+   627                                  ;									  ;
+   628                                  ;   Purpose: calculate a currency conversion, storing to [result]	  ;
+   629                                  ;--------------------------------------------------------------------------
+   630                                  _ConvertCurrency
+   631                                  				;call	_libConvertCurrency
+   632                                  				;ret
+   633                                  
+   634 00000446 52                       push dx			; Save registers
+   635 00000447 53                       push bx
+   636 00000448 56                       push si
+   637 00000449 57                       push di
+   638                                   
+   639 0000044A 80FE61                   cmp dh, 'a'			; Check if the input characters are
+   640 0000044D 7C56                     jl .Error			; valid characters from a through z
+   641 0000044F 80FE7A                   cmp dh, 'z'
+   642 00000452 7F51                     jg .Error
+   643 00000454 80FA61                   cmp dl, 'a'
+   644 00000457 7C4C                     jl .Error
+   645 00000459 80FA7A                   cmp dl, 'z'
+   646 0000045C 7F47                     jg .Error
+   647                                  
+   648 0000045E A1[6000]                 mov ax, word [principle]	; [result] holds [principle]
+   649 00000461 A3[6C00]                 mov word [result], ax
+   650 00000464 A1[6200]                 mov ax, word [principle+2]
+   651 00000467 A3[6E00]                 mov word [result+2], ax
+   652                                  
+   653 0000046A 88F3                     mov bl, dh			; Let 0 through 25 represent the letters
+   654 0000046C 80EB61                   sub bl, 'a'			; a through z
+   655 0000046F 30FF                     xor bh, bh
+   656 00000471 D1E3                     shl bx, 1			; Index words, not bytes
+   657                                  
+   658 00000473 8B87[BF01]               mov ax, word [tab_from + bx]	; Obtain location for FDNumber of the
+   659 00000477 89C3                     mov bx, ax			; "convert from" conversion factor
+   660 00000479 85DB                     test bx, bx			; If address is 0, then invalid letter
+   661 0000047B 7428                     jz .Error
+   662                                  
+   663 0000047D 89DE                     mov si, bx			; Else,
+   664 0000047F BF[6C00]                 mov di, result			; [result] holds [principle]*from
+   665 00000482 E8EA00                   call _FDMul
+   666                                  
+   667 00000485 88D3                     mov bl, dl			; Let 0 through 25 represent the letters
+   668 00000487 80EB61                   sub bl, 'a'			; a through z
+   669 0000048A 30FF                     xor bh, bh
+   670 0000048C D1E3                     shl bx, 1			; Index words, not bytes
+   671                                  
+   672 0000048E 8B87[F301]               mov ax, word [tab_to + bx]	; Obtain location for FDNumber of the
+   673 00000492 89C3                     mov bx, ax			; "convert to" conversion factor
+   674 00000494 85DB                     test bx, bx			; If address is 0, then invalid letter
+   675 00000496 740D                     jz .Error
+   676                                  
+   677 00000498 89DE                     mov si, bx			; Else,
+   678 0000049A BF[6C00]                 mov di, result			; [result] holds [principle]*from*to
+   679 0000049D E8CF00                   call _FDMul
+   680                                  
+   681 000004A0 B001                     mov al, 1			; ax = non-zero on success
+   682 000004A2 E90200                   jmp .End
+   683                                  
+   684                                   ;------
+   685                                   .Error:
+   686                                   ;------
+   687 000004A5 31C0                    	xor ax, ax		; ax = 0 on error
+   688                                  
+   689                                   ;----
+   690                                   .End:
+   691                                   ;----
+   692 000004A7 5F                      	pop di			; Restore registers
+   693 000004A8 5E                      	pop si
+   694 000004A9 5B                      	pop bx
+   695 000004AA 5A                      	pop dx
+   696 000004AB C3                      	ret
+   697                                   
+   698                                  
+   699                                  
+   700                                  ;--------------------------------------------------------------------------
+   701                                  ; FDRead								  ;
+   702                                  ;   Inputs: bx = offset to a string representing a decimal number	  ;
+   703                                  ;           di = offset of the buffer to which it should be stored	  ;
+   704                                  ;									  ;
+   705                                  ;   Outputs: bx = offset of the first non-converted character		  ;
+   706                                  ;            dl = conversion error code, as in ascbin; use overflow if    ;
+   707                                  ;                 the portion following the decimal is above 99		  ;
+   708                                  ;									  ;
+   709                                  ;   Calls: ascbin							  ;
+   710                                  ;									  ;
+   711                                  ;   Purpose: input a FDNumber from a user-typed string			  ;
+   712                                  ;--------------------------------------------------------------------------
+   713                                  _FDRead
+   714                                  			;call	_libFDRead
+   715                                  			;ret
+   716                                  
+   717 000004AC 50                       push ax
+   718 000004AD 51                       push cx
+   719                                  
+   720 000004AE E8(0000)                 call ascbin		; Convert integer part
+   721 000004B1 80FA01                   cmp dl, 1		; If no valid digits found or there are too
+   722 000004B4 7448                     je .Exit		; many digits, then exit with error indication
+   723 000004B6 80FA02                   cmp dl, 2
+   724 000004B9 7443                     je .Exit
+   725 000004BB 8905                     mov word [di], ax	; Store integer part in [di]
+   726 000004BD 803F2E                   cmp byte [bx], '.'	; If next character is not a decimal point,
+   727 000004C0 7530                     jnz .NoDecimal		; then there is no decimal portion of FDNumber
+   728 000004C2 43                       inc bx
+   729 000004C3 89D9                     mov cx, bx
+   730                                  
+   731 000004C5 E8(0000)                 call ascbin		; Convert decimal part
+   732 000004C8 80FA01                   cmp dl, 1		; If there are no digits after decimal point,
+   733 000004CB 7425                     je .NoDecimal		; then there is no decimal portion of FDNumber
+   734 000004CD 80FA02                   cmp dl, 2
+   735 000004D0 742C                     je .Exit
+   736 000004D2 41                       inc cx			; Make appropriate adjustment if only one digit
+   737 000004D3 39CB                     cmp bx, cx		; found after decimal point
+   738 000004D5 740F                     je .OneDigit
+   739                                  
+   740 000004D7 894502                   mov word [di+2], ax	; Store decimal part in [di+2]
+   741 000004DA 817D026300               cmp word [di+2], 99	; Decimal portion can only contain 0 through 99
+   742 000004DF 7F1B                     jg .Overflow
+   743 000004E1 30D2                     xor dl, dl
+   744 000004E3 E91800                   jmp .Exit
+   745                                   
+   746                                   ;---------
+   747                                   .OneDigit:
+   748                                   ;---------
+   749 000004E6 B10A                    	mov cl, 10		; If number is 12.3, single digit has
+   750 000004E8 F6E1                    	mul cl			; to be multiplied by 10, else will be
+   751 000004EA 894502                  	mov word [di+2], ax	; incorrectly represented as 12.03
+   752 000004ED 30D2                    	xor dl, dl
+   753 000004EF E90C00                  	jmp .Exit
+   754                                  
+   755                                   ;----------
+   756                                   .NoDecimal:
+   757                                   ;----------
+   758 000004F2 C745020000              	mov word [di+2], 0
+   759 000004F7 30D2                    	xor dl, dl
+   760 000004F9 E90200                  	jmp .Exit
+   761                                  
+   762                                   ;---------
+   763                                   .Overflow:
+   764                                   ;---------
+   765 000004FC B203                    	mov dl, 3
+   766                                  
+   767                                   ;-----
+   768                                   .Exit:
+   769                                   ;-----
+   770 000004FE 59                      	pop cx
+   771 000004FF 58                      	pop ax
+   772 00000500 C3                      	ret
+   773                                  
+   774                                  
+   775                                  
+   776                                  ;--------------------------------------------------------------------------
+   777                                  ; FDWrite								  ;
+   778                                  ;   Inputs: bx = offset to a 10 byte buffer				  ;
+   779                                  ;           si = offset of the FDNumber to be converted into ASCII	  ;
+   780                                  ;									  ;
+   781                                  ;   Outputs: bx = offset of the first non-blank character, with the	  ;
+   782                                  ;                 number right-justified and with spaces to the left,	  ;
+   783                                  ;                 two digits after the decimal point			  ;
+   784                                  ;            cl = number of non-blank characters			  ;
+   785                                  ;   Calls: binasc							  ;
+   786                                  ;									  ;
+   787                                  ;   Purpose: output a FDNumber into a user-readable string		  ;
+   788                                  ;--------------------------------------------------------------------------
+   789                                  _FDWrite
+   790                                  			;call	_libFDWrite
+   791                                  			;ret
+   792                                  
+   793 00000501 50                       push ax		; Save registers
+   794 00000502 52                       push dx
+   795 00000503 57                       push di
+   796 00000504 56                       push si
+   797                                  
+   798 00000505 8B04                     mov ax, word [si]
+   799 00000507 E8(0000)                 call binasc
+   800                                  
+   801 0000050A 30ED                     xor ch, ch
+   802                                  
+   803 0000050C 89CF                     mov di, cx
+   804 0000050E C6012E                   mov byte [bx + di], '.'
+   805 00000511 89DF                     mov di, bx
+   806                                  
+   807 00000513 01CB                     add bx, cx
+   808 00000515 43                       inc bx			; bx = location of just after decimal point
+   809                                  
+   810 00000516 88CD                     mov ch, cl		; Save the number of characters in integer part
+   811 00000518 53                       push bx		; and the location immediately after decimal point
+   812                                  
+   813 00000519 8B4402                   mov ax, word [si+2]
+   814 0000051C E8(0000)                 call binasc
+   815                                  
+   816 0000051F 80F901                   cmp cl, 1
+   817 00000522 740B                     je .OneDigit
+   818 00000524 80F902                   cmp cl, 2
+   819 00000527 7410                     je .TwoDigit
+   820                                  
+   821 00000529 BA3030                   mov dx, '00'		; If no decimal digits, then <integer>.00 is implied
+   822 0000052C E91000                   jmp .WriteDecimal
+   823                                  
+   824                                   ;---------
+   825                                   .OneDigit:
+   826                                   ;---------
+   827 0000052F B230                    	mov dl, '0'		; Save decimal part of number in dx,
+   828 00000531 8A37                    	mov dh, byte [bx]	; and clear right-justified number
+   829 00000533 C60700                  	mov byte [bx], 0	; that was the output of binasc
+   830 00000536 E90600                  	jmp .WriteDecimal			
+   831                                  
+   832                                   ;---------
+   833                                   .TwoDigit:
+   834                                   ;---------
+   835 00000539 8B17                    	mov dx, word [bx]	; dl = tenths place
+   836 0000053B C7070000                	mov word [bx], 0	; dx = hundredths place
+   837                                  
+   838                                   ;-------------
+   839                                   .WriteDecimal:
+   840                                   ;-------------
+   841 0000053F 5B                      	pop bx
+   842 00000540 8917                    	mov word [bx], dx
+   843                                  
+   844 00000542 89FB                    	mov bx, di
+   845 00000544 00E9                    	add cl, ch		; Number of non-blank characters
+   846                                  
+   847 00000546 5E                       pop si				; Restore registers
+   848 00000547 5F                       pop di
+   849 00000548 5A                       pop dx
+   850 00000549 58                       pop ax
+   851 0000054A C3                       ret
+   852                                  
+   853                                  
+   854                                  
+   855                                  ;--------------------------------------------------------------------------
+   856                                  ; FDAdd									  ;
+   857                                  ;   Inputs: si = offset to a source FDNumber				  ;
+   858                                  ;	    di = offset to a source and destination FDNumber		  ;
+   859                                  ;									  ;
+   860                                  ;   Outputs: [di] = holds the result of the addition			  ;
+   861                                  ;									  ;
+   862                                  ;   Purpose: Adds the FDNumbers at offsets di, si and stores at offset di ;
+   863                                  ;--------------------------------------------------------------------------
+   864                                  _FDAdd
+   865                                  				;call	_libFDAdd
+   866                                  				;ret
+   867                                  
+   868 0000054B 52                       push dx
+   869                                  
+   870 0000054C 8B14                     mov dx, word [si]		; Add integer portions of each FDNumber
+   871 0000054E 0315                     add dx, word [di]		; and store integer sum
+   872 00000550 8915                     mov word [di], dx
+   873                                  
+   874 00000552 8B5402                   mov dx, word [si+2]		; Add decimal portions of each FDNumber
+   875 00000555 035502                   add dx, word [di+2]		; and store decimal sum if less than 100
+   876 00000558 81FA6400                 cmp dx, 100
+   877 0000055C 7D06                     jge .GreaterThan99
+   878                                  
+   879 0000055E 895502                   mov word [di+2], dx
+   880 00000561 E90900                   jmp .End
+   881                                  
+   882                                   ;--------------
+   883                                   .GreaterThan99:
+   884                                   ;--------------
+   885 00000564 81EA6400                	sub dx, 100		; Otherwise, subtract 100 from decimal sum,
+   886 00000568 895502                  	mov word [di+2], dx	; store corrected decimal sum, and carry 1
+   887 0000056B FF05                    	inc word [di]
+   888                                  
+   889                                   ;----
+   890                                   .End:
+   891                                   ;----
+   892 0000056D 5A                      	pop dx
+   893 0000056E C3                      	ret
+   894                                  
+   895                                  
+   896                                  
+   897                                  ;--------------------------------------------------------------------------
+   898                                  ; FDMul									  ;
+   899                                  ;   Inputs: si = offset to a source FDNumber				  ;
+   900                                  ;           di = offset to a source and destination FDNumber		  ;
+   901                                  ;									  ;
+   902                                  ;   Outputs: [di] = holds the result of the multiplication		  ;
+   903                                  ;									  ;
+   904                                  ;   Purpose: Multiplies the FDNumbers at offsets di, si			  ;
+   905                                  ;            and stores at offset di					  ;
+   906                                  ;									  ;
+   907                                  ;   Formula: Ph = Ah*Bh + Ah*Bl/100 + Al*Bh/100				  ;
+   908                                  ;            Pl = Ah*Bl%100 + Al*Bh%100 + Al*Bl/100,			  ;
+   909                                  ;             where Ph, Pl are integer and decimal result		  ;
+   910                                  ;--------------------------------------------------------------------------
+   911                                  _FDMul
+   912                                  				;call	_libFDMul
+   913                                  				; ret
+   914                                  
+   915 0000056F 50                       push ax			; Preserve original values
+   916 00000570 66FF36[7400]             push dword [numbuf2]
+   917 00000575 51                       push cx
+   918 00000576 52                       push dx
+   919                                  
+   920 00000577 8B15                     mov dx, word [di]		; Use [numbuf2] for original value of [di]
+   921 00000579 8916[7400]               mov word [numbuf2], dx		; Use [numbuf2+2] for original value of [di+2]
+   922 0000057D 8B5502                   mov dx, word [di+2]		;   A,B = two FDNumbers , P = product
+   923 00000580 8916[7600]               mov word [numbuf2+2], dx	;   h,l = the integer and decimal parts
+   924                                  
+   925                                  
+   926                                   ;---------- Calculate integer part of product ----------;
+   927                                   ;							 ;
+   928 00000584 A1[7400]                 mov ax, word [numbuf2]		; [di] = (Ah*Bh)
+   929 00000587 F724                     mul word [si]
+   930 00000589 8905                     mov word [di], ax
+   931                                  
+   932 0000058B A1[7600]                 mov ax, word [numbuf2+2]	; [di] = (Ah*Bh) + (Ah*Bl)/100
+   933 0000058E F724                     mul word [si]
+   934 00000590 B96400                   mov cx, 100
+   935 00000593 31D2                     xor dx, dx			; Must clear dx before dividing
+   936 00000595 F7F1                     div cx
+   937 00000597 0105                     add word [di], ax
+   938                                  
+   939 00000599 A1[7400]                 mov ax, word [numbuf2]		; [di] = (Ah*Bh) + (Ah*Bl)/100 + (Al*Bh)/100
+   940 0000059C F76402                   mul word [si+2]
+   941 0000059F 31D2                     xor dx, dx			; Must clear dx before dividing
+   942 000005A1 F7F1                     div cx
+   943 000005A3 0105                     add word [di], ax
+   944                                  
+   945                                  
+   946                                   ;---------- Calculate decimal part of product ----------;
+   947                                   ;							 ;
+   948 000005A5 A1[7600]                 mov ax, word [numbuf2+2]	; [di+2] = (Ah*Bl)%100
+   949 000005A8 F724                     mul word [si]
+   950 000005AA 31D2                     xor dx, dx			; Must clear dx before dividing
+   951 000005AC F7F1                     div cx
+   952 000005AE 895502                   mov word [di+2], dx
+   953                                  
+   954 000005B1 A1[7400]                 mov ax, word [numbuf2]		; [di+2] = (Ah*Bl)%100 + (Al*Bh)%100
+   955 000005B4 F76402                   mul word [si+2]
+   956 000005B7 31D2                     xor dx, dx			; Must clear dx before dividing
+   957 000005B9 F7F1                     div cx
+   958 000005BB 015502                   add word [di+2], dx
+   959                                  
+   960 000005BE A1[7600]                 mov ax, word [numbuf2+2]	; [di+2] = (Ah*Bl)%100 + (Al*Bh)%100 + (Al*Bl)/100
+   961 000005C1 F76402                   mul word [si+2]
+   962 000005C4 31D2                     xor dx, dx			; Must clear dx before dividing
+   963 000005C6 F7F1                     div cx
+   964 000005C8 014502                   add word [di+2], ax
+   965                                   
+   966                                  
+   967                                   ;---------- Perform appropriate adjustments ----------;
+   968                                   ;						       ;
+   969 000005CB 81FA3200                 cmp dx, 50			; (Al*Bl)%100 might be greater than
+   970 000005CF 7C03                     jl .DecimalCheck		; or equal to 50.
+   971 000005D1 FF4502                   inc word [di+2]		; In such cases Pl should be incremented
+   972                                  
+   973                                   ;-------------
+   974                                   .DecimalCheck:
+   975                                   ;-------------
+   976 000005D4 817D026400              	cmp word [di+2], 100	; If decimal portion is 100 or greater,
+   977 000005D9 7C0A                    	jl .End			; then subtract 100 and carry 1 to integer
+   978 000005DB 816D026400              	sub word [di+2], 100	; part of the product
+   979 000005E0 FF05                    	inc word [di]
+   980 000005E2 E9EFFF                  	jmp .DecimalCheck
+   981                                  
+   982                                   ;----
+   983                                   .End:
+   984                                   ;----
+   985 000005E5 5A                      	pop dx			; Restore original values
+   986 000005E6 59                      	pop cx
+   987 000005E7 668F06[7400]            	pop dword [numbuf2]
+   988 000005EC 58                      	pop ax
+   989 000005ED C3                      	ret
+   990                                  
+   991                                  
+   992                                  
+   993                                  ;--------------------------------------------------------------------------
+   994                                  ; FDPow									  ;
+   995                                  ;   Inputs: si = offset to a source FDNumber as exponent		  ;
+   996                                  ;           di = offset to a source FDNumber as base			  ;
+   997                                  ;									  ;
+   998                                  ;   Outputs: dx = integer portion of the result				  ;
+   999                                  ;            ax = decimal portion of the result				  ;
+  1000                                  ;									  ;
+  1001                                  ;   Calls: FDMul, FDPow (recursion)					  ;
+  1002                                  ;									  ;
+  1003                                  ;   Purpose: raises [di] to the [si] power				  ;
+  1004                                  ;--------------------------------------------------------------------------
+  1005                                  _FDPow
+  1006                                  			;call	_libFDPow
+  1007                                  			;ret
+  1008                                  
+  1009 000005EE 66FF35                   push dword [di]	; Preserve the source base FDNumber
+  1010                                  
+  1011 000005F1 813C0000                 cmp word [si], 0	; If exponent = 0, set result = 1.00 and quit
+  1012 000005F5 7443                     jz .Zero
+  1013 000005F7 813C0100                 cmp word [si], 1	; If exponent = 1, we are done recursing
+  1014 000005FB 7435                     je .Finished
+  1015 000005FD D12C                     shr word [si], 1	; Divide exponent by 2 (set n = n/2)
+  1016 000005FF 7214                     jc .Odd		; If carry out = 1, we have an odd exponent
+  1017                                  
+  1018                                  
+  1019                                   ;---------         Even Exponent Recursive Calculation          ---------;
+  1020                                   ; When we have an even exponent, perform the following calculation:      ;
+  1021                                   ; b^n = b^(n/2) * b^(n/2)						  ;
+  1022                                   ; Here we set both si and di to the base, and then exit		  ;
+  1023                                  									  ;
+  1024                                   .Even:									  ;
+  1025 00000601 E8EAFF                  	call _FDPow							  ;
+  1026 00000604 8914                    	mov word [si], dx						  ;
+  1027 00000606 894402                  	mov word [si + 2], ax						  ;
+  1028 00000609 66FF34                  	push dword [si]			; Copy [si] to [di]		  ;
+  1029 0000060C 668F05                  	pop dword [di]							  ;
+  1030 0000060F E85DFF                  	call _FDMul							  ;
+  1031 00000612 E91D00                  	jmp .Finished							  ;
+  1032                                  									  ;
+  1033                                   ;------------------------------------------------------------------------;
+  1034                                  
+  1035                                   ;---------         Odd Exponent Recursive Calculation           ---------;
+  1036                                   ; When we have an odd exponent, perform the following calculation:	  ;
+  1037                                   ; b^n = b * b^(n/2) * b^(n/2)						  ;
+  1038                                   ; where b is stored in the initial push of dword [di]			  ;
+  1039                                  									  ;
+  1040                                   .Odd:									  ;
+  1041 00000615 66FF35                  	push dword [di]							  ;
+  1042 00000618 E8D3FF                  	call _FDPow							  ;
+  1043 0000061B 8914                    	mov word [si], dx						  ;
+  1044 0000061D 894402                  	mov word [si + 2], ax						  ;
+  1045 00000620 66FF34                  	push dword [si]			; Copy [si] to [di]		  ;
+  1046 00000623 668F05                  	pop dword [di]							  ;
+  1047 00000626 E846FF                  	call _FDMul							  ;
+  1048 00000629 668F04                  	pop dword [si]			; Multiply by original base	  ;
+  1049 0000062C E840FF                  	call _FDMul							  ;
+  1050 0000062F E90000                  	jmp .Finished							  ;
+  1051                                  									  ;
+  1052                                   ;------------------------------------------------------------------------;
+  1053                                  
+  1054                                  
+  1055                                   ;---------
+  1056                                   .Finished:
+  1057                                   ;---------
+  1058 00000632 8B15                    	mov dx, word [di]		; Store the result in the base,
+  1059 00000634 8B4502                  	mov ax, word [di+2]		; which is pointed to by di
+  1060 00000637 E90500                  	jmp .Exit
+  1061                                  
+  1062                                   ;-----
+  1063                                   .Zero:
+  1064                                   ;-----
+  1065 0000063A BA0100                  	mov dx, 1			; Result = 1.00
+  1066 0000063D 31C0                    	xor ax, ax
+  1067                                  
+  1068                                   ;----
+  1069                                   .Exit:
+  1070                                   ;----
+  1071 0000063F 668F05                  	pop dword[di]
+  1072 00000642 C3                      	ret

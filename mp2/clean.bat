@@ -1,0 +1,1 @@
+del *.map *.lst *.obj *.exe
